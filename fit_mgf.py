@@ -44,7 +44,7 @@ class NormalizeActivation(nn.Module):
         return z / (1.0 + mag + self.eps)
 
 class FFNet(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False, device = "cpu"):
         super(FFNet, self).__init__()
         self.network = nn.Sequential(
             HolomorphicLayer(input_dim, hidden_dim),
@@ -56,12 +56,13 @@ class FFNet(nn.Module):
             HolomorphicLayer(hidden_dim // 2, output_dim),
         )
         self.scale_by_zero = scale_by_zero
+        self.device = device
 
     def forward(self, x):
         raw = self.network(x)
         # Combine into a complex-valued "raw" network output
         if self.scale_by_zero:
-            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble)
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = self.device)
             raw0 = self.network(zero_point)
             output = torch.exp(raw - raw0)
         else:
@@ -69,17 +70,18 @@ class FFNet(nn.Module):
         return output
     
 class MGFNet(nn.Module):
-    def __init__(self, d, hidden_dim = 64):
+    def __init__(self, d, hidden_dim = 64, device = "cpu"):
         super(MGFNet, self).__init__()
         self.d = d
-        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, scale_by_zero = True)
+        self.device = device
+        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, scale_by_zero = True, device = self.device)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim))
+            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, device = self.device))
 
     def forward(self, x):
         phi = self.interior_network(x)
-        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble)
+        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = self.device)
         for i in range(self.d):
             input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
             phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
@@ -127,7 +129,7 @@ class MGFTrainer:
         self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
         self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
         self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
-        self.model = MGFNet(self.d, hidden_dim = hidden_dim).double().to(device = self.device)
+        self.model = MGFNet(self.d, hidden_dim = hidden_dim, device = self.device).double().to(device = self.device)
         self.dir = dir
         self.engine = SobolEngine(dimension=d)
     

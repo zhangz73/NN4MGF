@@ -118,9 +118,12 @@ class MGFNet(nn.Module):
             param.requires_grad = True
 
 class MGFTrainer:
-    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = ".", device = "cpu"):
+    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = "."):
         self.d = d
-        self.device = device
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        else:
+            self.device = "cpu"
         self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
         self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
         self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)

@@ -14,9 +14,9 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -10
+TRAIN_LB = -2
 TRAIN_UB = 0
-EVAL_LB = -30
+EVAL_LB = -2
 EVAL_UB = 0
 RETRAIN = True
 
@@ -33,9 +33,6 @@ SIGMA = torch.tensor([
 ])
 
 MU = torch.tensor([MU1, 0.])
-
-MIN_S = float("inf")
-MAX_S = -float("inf")
 
 scheme = f"d=2/harrison"
 
@@ -57,17 +54,14 @@ def tail_prob(t):
 
 def tail_prob_predicted(model, t):
     def tail_transform(s):
-        global MIN_S, MAX_S
-        MIN_S = min(MIN_S, float(s))
-        MAX_S = max(MAX_S, float(s))
         if s == 0:
             return 1.0
-        s_lst = torch.tensor([float(s)])
-        val = laplace_2d_to_xsum(model, s_lst)[0]
+        s_lst = torch.complex(torch.tensor([float(s.real)]), torch.tensor([float(s.imag)]))
+        val = laplace_2d_to_xsum(model, s_lst).tolist()[0]
         return (1 - val) / s
 
     # Invert this new transform directly
-    return mp.invertlaplace(tail_transform, t, method="stehfest")
+    return mp.invertlaplace(tail_transform, t, method="dehoog") #"stehfest" #"cohen"
 
 def laplace_xsum(s):
     ## L(s) = \int_0^{\inf} f(t) e^{-st} dt
@@ -91,7 +85,7 @@ def laplace_2d_to_xsum(model, s_lst):
     ##           = 1/s \int_0^{inf} \int_0^{\inf} \rho(x1, x2) e^{-s(x1 + x2)} dx1 dx2
     ##           = 1/s L(s, s)
     batch_size = len(s_lst)
-    input = torch.zeros((batch_size, 2)).double()
+    input = torch.zeros((batch_size, 2), dtype=torch.cdouble)
     input[:,0] = s_lst
     input[:,1] = s_lst
     with torch.no_grad():
@@ -103,7 +97,7 @@ def laplace_2d_to_xsum(model, s_lst):
     ans[mask] = joint_laplace[mask] / s_lst[mask]
     # Case 2: s = 0 → Laplace transform must equal 1
     ans[~mask] = 1.0
-    return ans.tolist()
+    return ans
 
 def create_lattice(lb, ub, n_points_per_dim = 50):
     x = np.linspace(lb, ub, n_points_per_dim)
@@ -113,10 +107,10 @@ def create_lattice(lb, ub, n_points_per_dim = 50):
     return lattice
 
 ## Training
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 512, dir = f"{scheme}")
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 256, dir = f"{scheme}", device = "cpu")
 if RETRAIN:
     anchor_set = None #create_lattice(-200, -180, n_points_per_dim = 20)
-    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-5, individual_init_lr = 1e-5, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 1e-8, lam_monotone = 0.1, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-4, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_init_lr = 5e-6, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 1e-8, lam_monotone = 0.1, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -141,15 +135,13 @@ plt.savefig(f"Plots/{scheme}/tail_prob.png")
 plt.clf()
 plt.close()
 
-print(MIN_S, MAX_S)
-
 ## Comparing Laplace transform of X1 + X2 against ground truth
-s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 50)[1:]
+s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 10)[1:]
 true_laplace_lst = []
 for s in tqdm(s_lst):
     ans = laplace_xsum(float(s))
     true_laplace_lst.append(ans)
-predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst)
+predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
 
 plt.scatter(s_lst, true_laplace_lst, label = "Ground Truth", color = "red")
 plt.plot(s_lst, predicted_laplace_lst, label = "Predicted")

@@ -12,26 +12,58 @@ from tqdm import tqdm
 
 torch.set_default_dtype(torch.float64)
 
+class HolomorphicLayer(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        # Initialize complex weights
+        # We wrap them as nn.Parameter to make them learnable
+        scale = 1e-2 #1/((2 * max(in_features, out_features)) ** 0.5)
+        self.weights = nn.Parameter(torch.randn(out_features, in_features, dtype=torch.cdouble) * scale)
+        self.bias = nn.Parameter(torch.randn(out_features, dtype=torch.cdouble) * scale)
+
+    def forward(self, z):
+        # z is complex input (x + iy)
+        # Linear transformation: Wz + b
+        return torch.nn.functional.linear(z, self.weights, self.bias)
+
+class CauchyActivation(nn.Module):
+    def __init__(self, eps=1e-12):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, z):
+        return 1.0 / (1.0 + z * z + self.eps)
+
+class NormalizeActivation(nn.Module):
+    def __init__(self, eps=1e-9):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, z):
+        mag = torch.abs(z)
+        return z / (1.0 + mag + self.eps)
+
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False):
         super(FFNet, self).__init__()
         self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            HolomorphicLayer(input_dim, hidden_dim),
             nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            HolomorphicLayer(hidden_dim, hidden_dim // 2),
+#            nn.Tanh(),
+#            HolomorphicLayer(hidden_dim // 2, hidden_dim // 4),
             nn.Tanh(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.Tanh(),
-            nn.Linear(hidden_dim // 4, output_dim),
+            HolomorphicLayer(hidden_dim // 2, output_dim),
         )
         self.scale_by_zero = scale_by_zero
 
     def forward(self, x):
         raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
         if self.scale_by_zero:
-            zero_point = torch.zeros(1, x.shape[1])
-            raw0 = self.network(torch.zeros_like(zero_point))
-            output = torch.exp(raw - raw0)   # (1, d+1)
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
         else:
             output = torch.exp(raw)
         return output
@@ -47,7 +79,7 @@ class MGFNet(nn.Module):
 
     def forward(self, x):
         phi = self.interior_network(x)
-        phi_i = torch.zeros((x.shape[0], self.d))
+        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble)
         for i in range(self.d):
             input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
             phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
@@ -86,12 +118,13 @@ class MGFNet(nn.Module):
             param.requires_grad = True
 
 class MGFTrainer:
-    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = "."):
+    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = ".", device = "cpu"):
         self.d = d
-        self.MU = mu
-        self.SIGMA = sigma
-        self.R = R
-        self.model = MGFNet(self.d, hidden_dim = hidden_dim).double()
+        self.device = device
+        self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
+        self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
+        self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
+        self.model = MGFNet(self.d, hidden_dim = hidden_dim).double().to(device = self.device)
         self.dir = dir
         self.engine = SobolEngine(dimension=d)
     
@@ -102,10 +135,18 @@ class MGFTrainer:
         grad = torch.autograd.grad(M_pred.sum(), s, create_graph=True)[0]
         return torch.relu(-grad).mean()  # penalize negative slopes
 
-    def sample_vector(self, lb = -1, ub = 0, batch_size = 100):
-#        vec = (ub - lb) * torch.rand(batch_size, self.d) + lb
-        vec = (ub - lb) * self.engine.draw(batch_size) + lb
-        return vec.double()
+    def sample_vector(self, lb=-1, ub=0, batch_size=100):
+        # Draw real part
+        real_part = (ub - lb) * self.engine.draw(batch_size) + lb
+        real_part = real_part.double()
+
+        # Draw imaginary part independently
+        imag_part = (ub - lb) * self.engine.draw(batch_size) + lb
+        imag_part = imag_part.double()
+
+        # Combine into complex tensor
+        vec = torch.complex(real_part, imag_part).to(device = self.device)
+        return vec
     
     ## Assume theta is a N x d matrix
     def gamma(self, theta):
@@ -121,14 +162,14 @@ class MGFTrainer:
         diff = (lhs - rhs)
         scale_factor = torch.abs(lhs)
         diff = diff / (scale_factor + 1e-8)
-        return torch.mean(diff.pow(2))
+        return torch.mean(torch.abs(diff) ** 2)
     
     def train(self, lb = -1, ub = 0, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, anchor_set = None):
         if full_gradient:
             assert theta_eval is not None
         ## Training
         optimizer = optim.Adam(self.model.parameters(), lr = joint_init_lr)
-        #scheduler = ExponentialLR(optimizer, gamma=0.99)
+        scheduler = ExponentialLR(optimizer, gamma=0.99)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
             T_0=joint_scheduler_T0,       # number of steps before first restart
@@ -171,6 +212,9 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
+            if torch.isnan(loss):
+                print("NaN produced in training.")
+                assert False
 #            loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss_arr.append(loss.item())
         #    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -190,6 +234,7 @@ class MGFTrainer:
         plt.close()
     
     def eval(self, x):
+        x = x.to(device = self.device)
         with torch.no_grad():
             output = self.model(x)
         return output
@@ -201,6 +246,7 @@ class MGFTrainer:
     def load(self):
         state_dict = torch.load(f"Models/{self.dir}/mgf.pt")
         self.model.load_state_dict(state_dict["model_state_dict"])
+        self.model = self.model.to(device = self.device)
     
     def plot_compare_heatmap(self, lb, ub, phi_theta, phi_theta_true, title):
         n = int(len(phi_theta) ** 0.5)

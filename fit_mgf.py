@@ -242,7 +242,7 @@ class MGFTrainer:
         x = x.to(device = self.device)
         with torch.no_grad():
             output = self.model(x)
-        return output
+        return output.cpu()
     
     def save(self):
         state_dict = {"model_state_dict": self.model.cpu().state_dict()}

@@ -18,7 +18,7 @@ TRAIN_LB = -2
 TRAIN_UB = 0
 EVAL_LB = -2
 EVAL_UB = 0
-RETRAIN = True
+RETRAIN = False
 
 MU1 = -1.
 
@@ -89,7 +89,7 @@ def laplace_2d_to_xsum(model, s_lst):
     input[:,0] = s_lst
     input[:,1] = s_lst
     with torch.no_grad():
-        output = model.eval(-input)
+        output = model.eval(-input).cpu()
         joint_laplace = output[:,0]
     ans = torch.empty_like(joint_laplace)
     # Case 1: s != 0
@@ -107,7 +107,7 @@ def create_lattice(lb, ub, n_points_per_dim = 50):
     return lattice
 
 ## Training
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 256, dir = f"{scheme}")
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 512, dir = f"{scheme}")
 if RETRAIN:
     anchor_set = None #create_lattice(-200, -180, n_points_per_dim = 20)
     mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-4, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_init_lr = 5e-6, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 1e-8, lam_monotone = 0.1, anchor_set = anchor_set)

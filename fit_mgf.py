@@ -15,7 +15,7 @@ torch.set_default_dtype(torch.float64)
 class HolomorphicLinear(nn.Module):
     def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
         super().__init__()
-        scale = (1 / in_features) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(in_features)))
+        scale = 0.01 #(1 / in_features) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(in_features)))
         self.weight = nn.Parameter(
             torch.empty(out_features, in_features, dtype=torch.cdouble).uniform_(-scale, scale)
         )
@@ -55,11 +55,11 @@ class FFNet(nn.Module):
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             nn.Tanh(),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            HolomorphicLinear(hidden_dim, 64, omega_0),
             nn.Tanh(),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            HolomorphicLinear(64, 64, omega_0),
             nn.Tanh(),
-            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+            HolomorphicLinear(64, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
 
@@ -216,8 +216,8 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
-        scale_factor = torch.abs(lhs)
-        diff = diff / (scale_factor + 1e-8)
+#        scale_factor = torch.abs(lhs)
+#        diff = diff / (scale_factor + 1e-8)
         return torch.mean(torch.abs(diff) ** 2)
     
     def train(self, lb = -1, ub = 0, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, anchor_set = None):

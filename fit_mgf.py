@@ -50,10 +50,10 @@ class FFNet(nn.Module):
             HolomorphicLayer(input_dim, hidden_dim),
             nn.Tanh(),
             HolomorphicLayer(hidden_dim, hidden_dim // 2),
-#            nn.Tanh(),
-#            HolomorphicLayer(hidden_dim // 2, hidden_dim // 4),
             nn.Tanh(),
-            HolomorphicLayer(hidden_dim // 2, output_dim),
+            HolomorphicLayer(hidden_dim // 2, hidden_dim // 4),
+            nn.Tanh(),
+            HolomorphicLayer(hidden_dim // 4, output_dim),
         )
         self.scale_by_zero = scale_by_zero
         self.device = device

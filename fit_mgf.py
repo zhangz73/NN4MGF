@@ -298,6 +298,7 @@ class MGFTrainer:
     def save(self):
         state_dict = {"model_state_dict": self.model.cpu().state_dict()}
         torch.save(state_dict, f"Models/{self.dir}/mgf.pt")
+        self.model.to(device = self.device)
     
     def load(self):
         state_dict = torch.load(f"Models/{self.dir}/mgf.pt", map_location=self.device)

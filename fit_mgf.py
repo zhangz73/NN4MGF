@@ -12,19 +12,17 @@ from tqdm import tqdm
 
 torch.set_default_dtype(torch.float64)
 
-class HolomorphicLayer(nn.Module):
-    def __init__(self, in_features, out_features):
+class HolomorphicLinear(nn.Module):
+    def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
         super().__init__()
-        # Initialize complex weights
-        # We wrap them as nn.Parameter to make them learnable
-        scale = 1e-2 #1/((2 * max(in_features, out_features)) ** 0.5)
-        self.weights = nn.Parameter(torch.randn(out_features, in_features, dtype=torch.cdouble) * scale)
-        self.bias = nn.Parameter(torch.randn(out_features, dtype=torch.cdouble) * scale)
+        scale = (1 / in_features) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(in_features)))
+        self.weight = nn.Parameter(
+            torch.empty(out_features, in_features, dtype=torch.cdouble).uniform_(-scale, scale)
+        )
+        self.bias = nn.Parameter(torch.zeros(out_features, dtype=torch.cdouble))
 
     def forward(self, z):
-        # z is complex input (x + iy)
-        # Linear transformation: Wz + b
-        return torch.nn.functional.linear(z, self.weights, self.bias)
+        return torch.nn.functional.linear(z, self.weight, self.bias)
 
 class CauchyActivation(nn.Module):
     def __init__(self, eps=1e-12):
@@ -43,26 +41,80 @@ class NormalizeActivation(nn.Module):
         mag = torch.abs(z)
         return z / (1.0 + mag + self.eps)
 
+class ComplexSine(nn.Module):
+    def __init__(self, omega_0=1.0):
+        super().__init__()
+        self.omega_0 = omega_0
+
+    def forward(self, z):
+        return torch.sin(self.omega_0 * z)
+
 class FFNet(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False, device = "cpu"):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
         super(FFNet, self).__init__()
         self.network = nn.Sequential(
-            HolomorphicLayer(input_dim, hidden_dim),
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             nn.Tanh(),
-            HolomorphicLayer(hidden_dim, hidden_dim // 2),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
             nn.Tanh(),
-            HolomorphicLayer(hidden_dim // 2, hidden_dim // 4),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
             nn.Tanh(),
-            HolomorphicLayer(hidden_dim // 4, output_dim),
+            HolomorphicLinear(hidden_dim, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
-        self.device = device
 
     def forward(self, x):
         raw = self.network(x)
         # Combine into a complex-valued "raw" network output
         if self.scale_by_zero:
-            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = self.device)
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class SirenNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(SirenNet, self).__init__()
+        self.network = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            ComplexSine(omega_0),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class LinearNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(LinearNet, self).__init__()
+        self.network = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
+            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
             raw0 = self.network(zero_point)
             output = torch.exp(raw - raw0)
         else:
@@ -70,18 +122,17 @@ class FFNet(nn.Module):
         return output
     
 class MGFNet(nn.Module):
-    def __init__(self, d, hidden_dim = 64, device = "cpu"):
+    def __init__(self, d, hidden_dim = 64):
         super(MGFNet, self).__init__()
         self.d = d
-        self.device = device
-        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, scale_by_zero = True, device = self.device)
+        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, device = self.device))
+            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0, device = self.device))
 
     def forward(self, x):
         phi = self.interior_network(x)
-        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = self.device)
+        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = phi.device)
         for i in range(self.d):
             input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
             phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
@@ -129,7 +180,7 @@ class MGFTrainer:
         self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
         self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
         self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
-        self.model = MGFNet(self.d, hidden_dim = hidden_dim, device = self.device).double().to(device = self.device)
+        self.model = MGFNet(self.d, hidden_dim = hidden_dim).double().to(device = self.device)
         self.dir = dir
         self.engine = SobolEngine(dimension=d)
     

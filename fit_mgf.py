@@ -194,14 +194,14 @@ class MGFTrainer:
     def sample_vector(self, lb=-1, ub=0, batch_size=100):
         # Draw real part
         real_part = (ub - lb) * self.engine.draw(batch_size) + lb
-        real_part = real_part.double()
+        real_part = real_part.double().to(device = self.device)
 
         # Draw imaginary part independently
         imag_part = (ub - lb) * self.engine.draw(batch_size) + lb
-        imag_part = imag_part.double()
+        imag_part = imag_part.double().to(device = self.device)
 
         # Combine into complex tensor
-        vec = torch.complex(real_part, imag_part).to(device = self.device)
+        vec = torch.complex(real_part, imag_part)
         return vec
     
     ## Assume theta is a N x d matrix
@@ -300,9 +300,9 @@ class MGFTrainer:
         torch.save(state_dict, f"Models/{self.dir}/mgf.pt")
     
     def load(self):
-        state_dict = torch.load(f"Models/{self.dir}/mgf.pt")
+        state_dict = torch.load(f"Models/{self.dir}/mgf.pt", map_location=self.device)
         self.model.load_state_dict(state_dict["model_state_dict"])
-        self.model = self.model.to(device = self.device)
+        self.model.to(device = self.device)
     
     def plot_compare_heatmap(self, lb, ub, phi_theta, phi_theta_true, title):
         n = int(len(phi_theta) ** 0.5)

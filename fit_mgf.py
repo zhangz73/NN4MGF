@@ -298,6 +298,9 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
+            # if epoch >= num_joint_epochs:
+            #     lam_monotone = 5e-3
+            #     lam_CR = 0
             loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
             if torch.isnan(loss):

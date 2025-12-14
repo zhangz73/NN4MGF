@@ -190,6 +190,27 @@ class MGFTrainer:
         M_pred = model(s)
         grad = torch.autograd.grad(M_pred.sum(), s, create_graph=True)[0]
         return torch.relu(-grad).mean()  # penalize negative slopes
+    
+    def cauchy_riemann_penalty(self, f, z):
+        """
+        f: complex-valued NN, f(z)
+        z: complex tensor, requires_grad=True
+        """
+        u = f(z).real
+        v = f(z).imag
+
+        x = z.real
+        y = z.imag
+
+        ux = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
+        uy = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+        vx = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
+        vy = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+
+        cr1 = ux - vy
+        cr2 = uy + vx
+
+        return torch.mean(cr1**2 + cr2**2)
 
     def sample_vector(self, lb=-1, ub=0, batch_size=100):
         # Draw real part
@@ -220,7 +241,7 @@ class MGFTrainer:
 #        diff = diff / (scale_factor + 1e-8)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def train(self, lb = -1, ub = 0, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, anchor_set = None):
+    def train(self, lb = -1, ub = 0, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, lam_CR = 1e-3, anchor_set = None):
         if full_gradient:
             assert theta_eval is not None
         ## Training
@@ -268,6 +289,7 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
+            loss += lam_CR * self.cauchy_riemann_penalty(model, theta)
             if torch.isnan(loss):
                 print("NaN produced in training.")
                 assert False

@@ -80,7 +80,11 @@ class SirenNet(nn.Module):
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             ComplexSine(omega_0),
-            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
+            nn.Tanh(),
+            HolomorphicLinear(64, 64, omega_0, is_first = True),
+            nn.Tanh(),
+            HolomorphicLinear(64, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
 
@@ -90,11 +94,11 @@ class SirenNet(nn.Module):
         if self.scale_by_zero:
             zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
             raw0 = self.network(zero_point)
-            output = raw / (raw0 + 1e-12)
-#            output = torch.exp(raw - raw0)
+            # output = raw / (raw0 + 1e-12)
+            output = torch.exp(raw - raw0)
         else:
-            output = raw
-#            output = torch.exp(raw)
+            # output = raw
+            output = torch.exp(raw)
         return output
 
 class LinearNet(nn.Module):
@@ -124,7 +128,7 @@ class MGFNet(nn.Module):
         self.interior_network = SirenNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(SirenNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
+            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
 
     def forward(self, x):
         phi = self.interior_network(x)

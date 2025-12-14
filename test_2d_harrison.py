@@ -18,7 +18,7 @@ TRAIN_LB = -2
 TRAIN_UB = 0
 EVAL_LB = -30
 EVAL_UB = 0
-RETRAIN = False
+RETRAIN = True
 
 MU1 = -1.
 

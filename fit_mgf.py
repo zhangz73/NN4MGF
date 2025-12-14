@@ -191,26 +191,24 @@ class MGFTrainer:
         grad = torch.autograd.grad(M_pred.sum(), s, create_graph=True)[0]
         return torch.relu(-grad).mean()  # penalize negative slopes
     
-    def cauchy_riemann_penalty(self, f, z):
-        """
-        f: complex-valued NN, f(z)
-        z: complex tensor, requires_grad=True
-        """
-        u = f(z).real
-        v = f(z).imag
+    def cauchy_riemann_penalty(self, model, z):
+        z = z.requires_grad_(True)
+        fz = model(z)          # complex output
 
-        x = z.real
-        y = z.imag
+        u = fz.real
+        v = fz.imag
 
-        ux = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
-        uy = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
-        vx = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
-        vy = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+        # CR equations: u_x = v_y, u_y = -v_x
+        grad_u = torch.autograd.grad(u.sum(), z, create_graph=True)[0]
+        grad_v = torch.autograd.grad(v.sum(), z, create_graph=True)[0]
 
-        cr1 = ux - vy
-        cr2 = uy + vx
+        ux = grad_u.real
+        uy = grad_u.imag
+        vx = grad_v.real
+        vy = grad_v.imag
 
-        return torch.mean(cr1**2 + cr2**2)
+        cr_penalty = torch.mean((ux - vy)**2 + (uy + vx)**2)
+        return cr_penalty
 
     def sample_vector(self, lb=-1, ub=0, batch_size=100):
         # Draw real part
@@ -289,7 +287,7 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
-            loss += lam_CR * self.cauchy_riemann_penalty(model, theta)
+            loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
             if torch.isnan(loss):
                 print("NaN produced in training.")
                 assert False

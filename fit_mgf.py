@@ -80,11 +80,11 @@ class SirenNet(nn.Module):
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             ComplexSine(omega_0),
-            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
-            nn.Tanh(),
-            HolomorphicLinear(64, 64, omega_0, is_first = True),
-            nn.Tanh(),
-            HolomorphicLinear(64, output_dim, omega_0),
+            # HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
+            # nn.Tanh(),
+            # HolomorphicLinear(64, 64, omega_0, is_first = True),
+            # nn.Tanh(),
+            HolomorphicLinear(hidden_dim, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
 
@@ -125,7 +125,7 @@ class MGFNet(nn.Module):
     def __init__(self, d, hidden_dim = 64):
         super(MGFNet, self).__init__()
         self.d = d
-        self.interior_network = SirenNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
+        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
             self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
@@ -186,10 +186,21 @@ class MGFTrainer:
     
     # ---- Define monotonicity penalty ----
     def monotonicity_penalty(self, model, s):
+        """
+        Penalizes negative slopes of the real part of a complex-valued model output.
+        """
         s.requires_grad_(True)
-        M_pred = model(s)
-        grad = torch.autograd.grad(M_pred.sum(), s, create_graph=True)[0]
-        return torch.relu(-grad).mean()  # penalize negative slopes
+        M_pred = model(s)  # complex output, shape [N, ...]
+        
+        # Take the real part for monotonicity
+        M_real = M_pred.real
+        
+        # Compute gradients w.r.t input
+        grad_real = torch.autograd.grad(M_real.sum(), s, create_graph=True)[0]
+        
+        # Penalize negative slopes
+        penalty = torch.relu(-grad_real.real).mean()
+        return penalty
     
     def cauchy_riemann_penalty(self, model, z):
         z = z.requires_grad_(True)
@@ -287,11 +298,11 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
+            loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
             if torch.isnan(loss):
                 print("NaN produced in training.")
                 assert False
-#            loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss_arr.append(loss.item())
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.zero_grad()

@@ -14,7 +14,7 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -2
+TRAIN_LB = -30
 TRAIN_UB = 0
 EVAL_LB = -30
 EVAL_UB = 0

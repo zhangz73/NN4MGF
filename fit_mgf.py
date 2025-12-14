@@ -80,10 +80,6 @@ class SirenNet(nn.Module):
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             ComplexSine(omega_0),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
-            ComplexSine(omega_0),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
-            ComplexSine(omega_0),
             HolomorphicLinear(hidden_dim, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
@@ -94,9 +90,11 @@ class SirenNet(nn.Module):
         if self.scale_by_zero:
             zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
             raw0 = self.network(zero_point)
-            output = torch.exp(raw - raw0)
+            output = raw / (raw0 + 1e-12)
+#            output = torch.exp(raw - raw0)
         else:
-            output = torch.exp(raw)
+            output = raw
+#            output = torch.exp(raw)
         return output
 
 class LinearNet(nn.Module):
@@ -104,8 +102,6 @@ class LinearNet(nn.Module):
         super(LinearNet, self).__init__()
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
-            HolomorphicLinear(hidden_dim, hidden_dim, omega_0),
             HolomorphicLinear(hidden_dim, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
@@ -125,10 +121,10 @@ class MGFNet(nn.Module):
     def __init__(self, d, hidden_dim = 64):
         super(MGFNet, self).__init__()
         self.d = d
-        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
+        self.interior_network = SirenNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
+            self.boundary_networks.append(SirenNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
 
     def forward(self, x):
         phi = self.interior_network(x)
@@ -273,7 +269,7 @@ class MGFTrainer:
                 assert False
 #            loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss_arr.append(loss.item())
-        #    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

@@ -14,10 +14,10 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -1
+TRAIN_LB = -10
 TRAIN_UB = 0
-TRAIN_IMAG_LB = -0.5
-TRAIN_IMAG_UB = 0.5
+TRAIN_IMAG_LB = -60
+TRAIN_IMAG_UB = 60
 EVAL_LB = -1
 EVAL_UB = 0
 RETRAIN = True
@@ -41,6 +41,9 @@ scheme = f"d=2/harrison"
 os.makedirs(f"Plots/{scheme}", exist_ok=True)
 os.makedirs(f"Models/{scheme}", exist_ok=True)
 
+MIN_REAL, MAX_REAL = float("inf"), -float("inf")
+MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
+
 def density(x1, x2):
     C = math.pi ** (-0.5) * (2 * abs(MU1)) ** 1.5
     r = (x1 ** 2 + x2 ** 2) ** 0.5
@@ -56,6 +59,11 @@ def tail_prob(t):
 
 def tail_prob_predicted(model, t):
     def tail_transform(s):
+        global MIN_REAL, MAX_REAL, MIN_IMAG, MAX_IMAG
+        MIN_REAL = min(MIN_REAL, float(s.real))
+        MAX_REAL = max(MAX_REAL, float(s.real))
+        MIN_IMAG = min(MIN_IMAG, float(s.imag))
+        MAX_IMAG = max(MAX_IMAG, float(s.imag))
         if s == 0:
             return 1.0
         s_lst = torch.complex(torch.tensor([float(s.real)]), torch.tensor([float(s.imag)]))
@@ -112,7 +120,7 @@ def create_lattice(lb, ub, n_points_per_dim = 50):
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
 if RETRAIN:
     anchor_set = None #create_lattice(-200, -180, n_points_per_dim = 20)
-    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-4, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-7, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 1e-1, lam_CR = 1e-4, lam_growth = 1e-4, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-4, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-7, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -140,6 +148,9 @@ plt.title(f"Trained on $\\theta$ $\\in$ [{TRAIN_LB}, {TRAIN_UB}]^2")
 plt.savefig(f"Plots/{scheme}/tail_prob.png")
 plt.clf()
 plt.close()
+
+print("Real range:", MIN_REAL, MAX_REAL)
+print("Imag range:", MIN_IMAG, MAX_IMAG)
 
 ## Comparing Laplace transform of X1 + X2 against ground truth
 s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 10)[1:]

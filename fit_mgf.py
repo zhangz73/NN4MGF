@@ -80,11 +80,11 @@ class SirenNet(nn.Module):
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
             ComplexSine(omega_0),
-            # HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
-            # nn.Tanh(),
-            # HolomorphicLinear(64, 64, omega_0, is_first = True),
-            # nn.Tanh(),
-            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
+            ComplexSine(omega_0),
+#            HolomorphicLinear(64, 64, omega_0, is_first = True),
+#            ComplexSine(omega_0),
+            HolomorphicLinear(64, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
 
@@ -125,10 +125,10 @@ class MGFNet(nn.Module):
     def __init__(self, d, hidden_dim = 64):
         super(MGFNet, self).__init__()
         self.d = d
-        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 5.0, scale_by_zero = True)
+        self.interior_network = SirenNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 1.0, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 5.0))
+            self.boundary_networks.append(SirenNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 1.0))
 
     def forward(self, x):
         phi = self.interior_network(x)
@@ -177,9 +177,10 @@ class MGFTrainer:
             self.device = "cuda"
         else:
             self.device = "cpu"
-        self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
-        self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
-        self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
+        if mu is not None and sigma is not None and R is not None:
+            self.MU = torch.complex(mu, torch.zeros_like(mu)).to(device = self.device)
+            self.SIGMA = torch.complex(sigma, torch.zeros_like(sigma)).to(device = self.device)
+            self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
         self.model = MGFNet(self.d, hidden_dim = hidden_dim).double().to(device = self.device)
         self.dir = dir
         self.engine = SobolEngine(dimension=d)
@@ -256,12 +257,50 @@ class MGFTrainer:
 #        diff = diff / (scale_factor + 1e-8)
         return torch.mean(torch.abs(diff) ** 2)
     
+    def train_from_target(self, target_mgf_func, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
+        optimizer = optim.Adam(self.model.parameters(), lr = init_lr)
+        scheduler = ExponentialLR(optimizer, gamma=0.99)
+        loss_arr = []
+        for epoch in tqdm(range(num_epochs)):
+            theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
+            output = self.model(theta)
+            phi_theta = output[:,0]
+            phi_i_theta = output[:,1:]
+
+            phi_theta_true = target_mgf_func(theta)
+            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
+            if lam_monotone > 0:
+                loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
+            if lam_CR > 0:
+                loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+            if lam_growth > 0:
+                loss += lam_growth * self.growth_penalty(self.model, theta)
+            if torch.isnan(loss):
+                print("NaN produced in training.")
+                assert False
+            loss_arr.append(loss.item())
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+        ## Evaluation
+        plt.plot(loss_arr)
+        plt.xlabel("Epoch")
+        plt.ylabel("Bar Loss")
+        #plt.yscale("log")
+        plt.title(f"{loss_arr[-1]:.2e}")
+        plt.savefig(f"Plots/{self.dir}/loss.png")
+        plt.clf()
+        plt.close()
+    
     def train(self, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4, anchor_set = None):
         if full_gradient:
             assert theta_eval is not None
         ## Training
         optimizer = optim.Adam(self.model.parameters(), lr = joint_init_lr)
-        scheduler = ExponentialLR(optimizer, gamma=0.99)
+#        scheduler = ExponentialLR(optimizer, gamma=0.99)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
             T_0=joint_scheduler_T0,       # number of steps before first restart
@@ -305,12 +344,12 @@ class MGFTrainer:
             phi_i_theta = output[:,1:]
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
-            # if epoch >= num_joint_epochs:
-            #     lam_monotone = 5e-3
-            #     lam_CR = 0
-            loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
-            loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
-            loss += lam_growth * self.growth_penalty(self.model, theta)
+            if lam_monotone > 0:
+                loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
+            if lam_CR > 0:
+                loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+            if lam_growth > 0:
+                loss += lam_growth * self.growth_penalty(self.model, theta)
             if torch.isnan(loss):
                 print("NaN produced in training.")
                 assert False
@@ -324,7 +363,7 @@ class MGFTrainer:
         ## Evaluation
         plt.plot(loss_arr)
         plt.xlabel("Epoch")
-        plt.ylabel("Bar Loss")
+        plt.ylabel("Training Loss")
         #plt.yscale("log")
         plt.title(f"{loss_arr[-1]:.2e}")
         plt.savefig(f"Plots/{self.dir}/loss.png")

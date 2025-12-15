@@ -220,6 +220,11 @@ class MGFTrainer:
 
         cr_penalty = torch.mean((ux - vy)**2 + (uy + vx)**2)
         return cr_penalty
+    
+    def growth_penalty(self, model, s, C=1.0):
+        M = model(s)
+        bound = torch.exp(C * torch.norm(s, dim=1))
+        return torch.mean(torch.relu(torch.abs(M) - bound)**2)
 
     def sample_vector(self, lb=-1, ub=0, imag_lb=-0.5, imag_ub=0.5, batch_size=100):
         # Draw real part
@@ -250,7 +255,7 @@ class MGFTrainer:
 #        diff = diff / (scale_factor + 1e-8)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def train(self, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, lam_CR = 1e-3, anchor_set = None):
+    def train(self, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4, anchor_set = None):
         if full_gradient:
             assert theta_eval is not None
         ## Training
@@ -304,6 +309,7 @@ class MGFTrainer:
             #     lam_CR = 0
             loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+            loss += lam_growth * self.growth_penalty(self.model, theta)
             if torch.isnan(loss):
                 print("NaN produced in training.")
                 assert False

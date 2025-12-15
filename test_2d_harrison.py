@@ -18,7 +18,7 @@ TRAIN_LB = -1
 TRAIN_UB = 0
 TRAIN_IMAG_LB = -0.5
 TRAIN_IMAG_UB = 0.5
-EVAL_LB = -30
+EVAL_LB = -1
 EVAL_UB = 0
 RETRAIN = True
 
@@ -117,6 +117,10 @@ if RETRAIN:
 else:
     mgf_trainer.load()
 
+## Compute first moment
+first_moment = mgf_trainer.get_first_moment()
+print(first_moment)
+
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 6))
 true_prob_lst = []
@@ -128,7 +132,7 @@ for t in tqdm(t_lst):
     predicted_prob_lst.append(predicted)
 
 plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
-plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
+#plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
 plt.legend()
 plt.xlabel("t")
 plt.ylabel("P(X1 + X2 > t)")

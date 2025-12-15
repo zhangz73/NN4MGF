@@ -331,6 +331,21 @@ class MGFTrainer:
         plt.clf()
         plt.close()
     
+    def get_first_moment(self):
+        s0 = torch.zeros(
+            1, self.d,
+            dtype=torch.cdouble,
+            device=self.device,
+            requires_grad=True
+        )
+        M = self.model(s0)[:, 0]   # interior MGF only
+        grad = torch.autograd.grad(
+            M.real.sum(),
+            s0,
+            create_graph=False
+        )[0]
+        return grad.real.squeeze().tolist()
+    
     def eval(self, x):
         x = x.to(device = self.device)
         with torch.no_grad():

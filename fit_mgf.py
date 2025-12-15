@@ -223,7 +223,7 @@ class MGFTrainer:
     
     def growth_penalty(self, model, s, C=1.0):
         M = model(s)
-        bound = torch.exp(C * torch.norm(s, dim=1))
+        bound = torch.exp(-C * torch.norm(s, dim=1))
         bound = bound.unsqueeze(1)
         return torch.mean(torch.relu(torch.abs(M) - bound)**2)
 

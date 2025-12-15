@@ -82,8 +82,8 @@ class SirenNet(nn.Module):
             ComplexSine(omega_0),
             HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
             ComplexSine(omega_0),
-#            HolomorphicLinear(64, 64, omega_0, is_first = True),
-#            ComplexSine(omega_0),
+            # HolomorphicLinear(64, 64, omega_0, is_first = True),
+            # ComplexSine(omega_0),
             HolomorphicLinear(64, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero

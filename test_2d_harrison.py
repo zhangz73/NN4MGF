@@ -18,7 +18,7 @@ TRAIN_LB = -10
 TRAIN_UB = 0
 TRAIN_IMAG_LB = -60
 TRAIN_IMAG_UB = 60
-EVAL_LB = -1
+EVAL_LB = -10
 EVAL_UB = 0
 RETRAIN = True
 
@@ -120,7 +120,7 @@ def create_lattice(lb, ub, n_points_per_dim = 50):
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
 if RETRAIN:
     anchor_set = None #create_lattice(-200, -180, n_points_per_dim = 20)
-    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-4, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-7, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-5, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-8, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 1e-1, lam_CR = 1e-2, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -140,7 +140,7 @@ for t in tqdm(t_lst):
     predicted_prob_lst.append(predicted)
 
 plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
-#plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
+plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
 plt.legend()
 plt.xlabel("t")
 plt.ylabel("P(X1 + X2 > t)")

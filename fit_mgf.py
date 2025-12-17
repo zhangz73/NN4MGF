@@ -1,4 +1,5 @@
 import os
+import math
 import mpmath
 import numpy as np
 import pandas as pd
@@ -12,17 +13,103 @@ from tqdm import tqdm
 
 torch.set_default_dtype(torch.float64)
 
-class HolomorphicLinear(nn.Module):
+class HolomorphicLinearOld(nn.Module):
     def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
         super().__init__()
-        scale = 0.01 #(1 / in_features) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(in_features)))
+        denom = max(in_features, 1)
+        scale = (1 / denom) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(denom))) #0.01
+        scale *= 0.01
         self.weight = nn.Parameter(
             torch.empty(out_features, in_features, dtype=torch.cdouble).uniform_(-scale, scale)
         )
-        self.bias = nn.Parameter(torch.zeros(out_features, dtype=torch.cdouble))
+        self.bias = nn.Parameter(
+            torch.empty(out_features, dtype=torch.cdouble).uniform_(-scale, scale)
+        ) #nn.Parameter(torch.zeros(out_features, dtype=torch.cdouble))
 
     def forward(self, z):
         return torch.nn.functional.linear(z, self.weight, self.bias)
+
+class HolomorphicLinear(nn.Module):
+    def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
+        super().__init__()
+
+        denom = max(in_features, 1)
+        scale = (1 / denom) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(denom)))
+        scale *= 0.01
+
+        # Real and imaginary parts of weight
+        self.Wr = nn.Parameter(
+            torch.empty(out_features, in_features).uniform_(-scale, scale)
+        )
+        self.Wi = nn.Parameter(
+            torch.empty(out_features, in_features).uniform_(-scale, scale)
+        )
+
+        # Real and imaginary parts of bias
+        self.br = nn.Parameter(
+            torch.empty(out_features).uniform_(-scale, scale)
+        )
+        self.bi = nn.Parameter(
+            torch.empty(out_features).uniform_(-scale, scale)
+        )
+
+    def forward(self, z):
+        """
+        z: complex tensor of shape (..., in_features)
+        """
+        zr = z.real
+        zi = z.imag
+
+        real = zr @ self.Wr.T - zi @ self.Wi.T + self.br
+        imag = zr @ self.Wi.T + zi @ self.Wr.T + self.bi
+#        real = zr @ self.Wr.T + self.br
+#        imag = zr @ self.Wi.T + self.bi
+
+        return torch.complex(real, imag)
+
+class NormalizeComplex(nn.Module):
+    def __init__(self, max_mag=3.0, eps=1e-8):
+        super().__init__()
+        self.max_mag = max_mag
+        self.eps = eps
+
+    def forward(self, z):
+        mag = torch.abs(z)
+        scale = torch.clamp(self.max_mag / (mag + self.eps), max=1.0)
+        return z * scale
+
+class ComplexExpGate(nn.Module):
+    def __init__(self, alpha=0.1):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.tensor(alpha, dtype=torch.double))
+
+    def forward(self, z):
+        return z * torch.exp(self.alpha * z)
+
+class PolyResidualBlock(nn.Module):
+    """
+    Holomorphic multivariate polynomial residual block:
+        z -> z + A z + sum_{i,j} B_{ij} z_i z_j
+    """
+    def __init__(self, d):
+        super().__init__()
+        self.d = d
+        scale = 0.1
+        # Linear perturbation
+        self.A = nn.Parameter(
+            torch.randn(d, d, dtype=torch.cdouble) * scale
+        )
+        # Quadratic cross terms
+        self.B = nn.Parameter(
+            torch.randn(d, d, d, dtype=torch.cdouble) * scale
+        )
+
+    def forward(self, z):
+        # z: (batch, d)
+        linear = z @ self.A.T                      # (batch, d)
+        # quadratic: sum_jk B[i,j,k] z_j z_k
+        quad = torch.einsum("bij,jk->bi", self.B, torch.einsum("bj,bk->jk", z, z))
+        return z + linear + quad
 
 class CauchyActivation(nn.Module):
     def __init__(self, eps=1e-12):
@@ -31,6 +118,11 @@ class CauchyActivation(nn.Module):
 
     def forward(self, z):
         return 1.0 / (1.0 + z * z + self.eps)
+
+class BoundedHolomorphicActivation(nn.Module):
+    def forward(self, z):
+        # entire + bounded in imaginary direction
+        return z / (1 + z*z)
 
 class NormalizeActivation(nn.Module):
     def __init__(self, eps=1e-9):
@@ -48,6 +140,64 @@ class ComplexSine(nn.Module):
 
     def forward(self, z):
         return torch.sin(self.omega_0 * z)
+
+class FourierFeatures(nn.Module):
+    def __init__(self, in_dim=2, m=64, y_max=20.0):
+        """
+        m: number of frequencies
+        We build log-spaced frequencies; good for large |Im(s)|.
+        """
+        super().__init__()
+        # Frequencies roughly covering [1, y_max] scale
+        freqs = torch.logspace(0, math.log10(max(2.0, y_max)), steps=m)
+        # Random directions in R^2
+        dirs = torch.randn(m, in_dim)
+        dirs = dirs / (dirs.norm(dim=1, keepdim=True) + 1e-12)
+        B = (freqs[:, None] * dirs)  # (m,2)
+#        scale = 1.0  # adjust based on |x| range
+#        B = B / B.norm(dim=1, keepdim=True) * scale
+        self.register_buffer("B", B)
+
+    def forward(self, xy):
+        # xy: (N,2)
+        proj = 2.0 * math.pi * (xy @ self.B.T)  # (N,m)
+        return torch.cat([torch.cos(proj), torch.sin(proj)], dim=1)  # (N,2m)
+
+class LogGMFNet(nn.Module):
+    def __init__(self, ff_m=64, hidden=128, depth=3, y_max=20.0):
+        super().__init__()
+        self.ff = FourierFeatures(in_dim=2, m=ff_m, y_max=y_max)
+        in_dim = 2 * ff_m
+        layers = []
+        d = in_dim
+        for _ in range(depth):
+            layers += [nn.Linear(d, hidden), nn.SiLU()]
+            d = hidden
+        layers += [nn.Linear(d, 2)]  # outputs [u, v]
+        self.mlp = nn.Sequential(*layers)
+        
+        # --- scale all layers ---
+        for i, layer in enumerate(self.mlp):
+            if isinstance(layer, nn.Linear):
+                fan_in = layer.weight.shape[1]
+                if i == len(self.mlp)-1:  # last layer
+                    nn.init.uniform_(layer.weight, -0.1, 0.1)
+                    nn.init.uniform_(layer.bias, -0.1, 0.1)
+                else:
+                    scale = 1 / np.sqrt(fan_in)
+                    nn.init.uniform_(layer.weight, -scale, scale)
+                    nn.init.zeros_(layer.bias)
+
+    def forward(self, x):
+        xy = torch.cat([x.real, x.imag], dim = 1)
+        z = self.ff(xy)
+        uv = self.mlp(z)
+        u, v = uv[:, 0], uv[:, 1]
+        # reconstruct complex g_hat
+        amp = torch.exp(u)
+        g_hat = torch.complex(amp * torch.cos(v), amp * torch.sin(v)).view((-1, 1))
+        return g_hat
+
 
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
@@ -74,16 +224,87 @@ class FFNet(nn.Module):
             output = torch.exp(raw)
         return output
 
-class SirenNet(nn.Module):
+class RealFFNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False):
+        super(FFNet, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim, is_first = True),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, output_dim),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class PolyResNet(nn.Module):
+    """
+    Multivariate holomorphic polynomial residual network
+    with optional scale_by_zero normalization.
+    """
+    def __init__(self, input_dim, depth=4, scale_by_zero=False):
+        super().__init__()
+        self.input_dim = input_dim
+        self.scale_by_zero = scale_by_zero
+
+        self.blocks = nn.ModuleList(
+            [PolyResidualBlock(input_dim) for _ in range(depth)]
+        )
+
+        # Final holomorphic projection to scalar log-MGF
+        self.c = nn.Parameter(
+            torch.randn(input_dim, 1, dtype=torch.cdouble) * 0.1
+        )
+
+    def core(self, theta):
+        """
+        Core holomorphic map producing log-MGF (unnormalized).
+        """
+        z = theta
+        for block in self.blocks:
+            z = block(z)
+        return z @ self.c   # (batch, 1)
+
+    def forward(self, theta):
+        """
+        Returns MGF(theta), not log-MGF.
+        """
+        if self.input_dim == 0:
+            return torch.ones(theta.shape[0], 1, dtype=torch.cdouble)
+            
+        raw = self.core(theta)
+
+        if self.scale_by_zero:
+            zero_point = torch.zeros(
+                1, self.input_dim, dtype=torch.cdouble, device=theta.device
+            )
+            raw0 = self.core(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+
+        return output
+
+class BoundedNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
-        super(SirenNet, self).__init__()
+        super(BoundedNet, self).__init__()
         self.network = nn.Sequential(
             HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
-            ComplexSine(omega_0),
-            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = True),
-            ComplexSine(omega_0),
-            # HolomorphicLinear(64, 64, omega_0, is_first = True),
-            # ComplexSine(omega_0),
+            BoundedHolomorphicActivation(),
+            HolomorphicLinear(hidden_dim, 64, omega_0),
+            BoundedHolomorphicActivation(),
             HolomorphicLinear(64, output_dim, omega_0),
         )
         self.scale_by_zero = scale_by_zero
@@ -94,12 +315,33 @@ class SirenNet(nn.Module):
         if self.scale_by_zero:
             zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
             raw0 = self.network(zero_point)
-            # output = raw / (raw0 + 1e-12)
             output = torch.exp(raw - raw0)
         else:
-            # output = raw
             output = torch.exp(raw)
         return output
+
+class SirenNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(SirenNet, self).__init__()
+        self.C = 3
+        self.hf_net = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            NormalizeComplex(3.0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = False),
+            NormalizeComplex(3.0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(64, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.hf_net(x)
+        if self.scale_by_zero:
+            zero = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device=x.device)
+            raw0 = self.hf_net(zero)
+            return torch.exp(raw - raw0)
+        return torch.exp(raw)
 
 class LinearNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
@@ -125,10 +367,13 @@ class MGFNet(nn.Module):
     def __init__(self, d, hidden_dim = 64):
         super(MGFNet, self).__init__()
         self.d = d
-        self.interior_network = SirenNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = 1.0, scale_by_zero = True)
+        omega_0 = 1.0
+        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
+#        self.interior_network = LogGMFNet() #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(SirenNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = 1.0))
+#            self.boundary_networks.append(PolyResNet(self.d-1, depth = 2, scale_by_zero = False))
+            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):
         phi = self.interior_network(x)
@@ -257,18 +502,33 @@ class MGFTrainer:
 #        diff = diff / (scale_factor + 1e-8)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def train_from_target(self, target_mgf_func, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
+    def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
+        if full_gradient:
+            assert theta_eval is not None
         optimizer = optim.Adam(self.model.parameters(), lr = init_lr)
         scheduler = ExponentialLR(optimizer, gamma=0.99)
+#        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+#            optimizer,
+#            T_0=100,       # number of steps before first restart
+#            T_mult=1,     # how much T increases after restart
+#            eta_min=1e-6  # minimum LR
+#        )
         loss_arr = []
         for epoch in tqdm(range(num_epochs)):
-            theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
+            if full_gradient:
+                theta = theta_eval.clone()
+            else:
+                theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
             output = self.model(theta)
-            phi_theta = output[:,0]
-            phi_i_theta = output[:,1:]
+            phi_theta = output[:,0].view((-1, 1))
+            phi_i_theta = output[:,1:].view((-1, self.d))
 
             phi_theta_true = target_mgf_func(theta)
+#            loss = torch.mean(torch.abs(torch.log(phi_theta) - torch.log(phi_theta_true)) ** 2)
             loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
+#            loss_real = torch.mean(torch.abs(phi_theta.real - phi_theta_true.real) ** 2)
+#            loss_imag = torch.mean(torch.abs(phi_theta.imag - phi_theta_true.imag) ** 2)
+#            loss = loss_real + loss_imag
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             if lam_CR > 0:
@@ -279,9 +539,9 @@ class MGFTrainer:
                 print("NaN produced in training.")
                 assert False
             loss_arr.append(loss.item())
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.step()
             scheduler.step()
 
@@ -340,8 +600,8 @@ class MGFTrainer:
                 anchors.to(device = self.device)
                 theta = torch.cat([theta, anchors], dim = 0)
             output = self.model(theta)
-            phi_theta = output[:,0]
-            phi_i_theta = output[:,1:]
+            phi_theta = output[:,0].view((-1, 1))
+            phi_i_theta = output[:,1:].view((-1, self.d))
 
             loss = self.bar_loss(theta, phi_theta, phi_i_theta)
             if lam_monotone > 0:
@@ -354,9 +614,9 @@ class MGFTrainer:
                 print("NaN produced in training.")
                 assert False
             loss_arr.append(loss.item())
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.step()
             scheduler.step()
 

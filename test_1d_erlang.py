@@ -98,13 +98,13 @@ theta_real_lst, theta_imag_lst = torch.from_numpy(X.ravel()).double(), torch.fro
 theta_lst = torch.complex(theta_real_lst, theta_imag_lst)
 
 ## Training
-mgf_trainer = MGFTrainer(d = 1, mu = None, sigma = None, R = None, hidden_dim = 128, dir = f"{scheme}")
+mgf_trainer = MGFTrainer(d = 1, mu = None, sigma = None, R = None, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 if RETRAIN:
     t_lst = list(range(1, 6))
     for t in tqdm(t_lst):
         tail_prob_predicted(mgf_trainer, t)
     theta_eval = -torch.tensor(S_LST, dtype=torch.cdouble).reshape((-1, 1))
-    mgf_trainer.train_from_target(target_mgf_func, full_gradient = False, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 500, num_epochs = 2000, init_lr = 1e-3, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0)
+    mgf_trainer.train_from_target(target_mgf_func, full_gradient = False, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 1000, num_epochs = 2000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-2, lam_growth = 0)
     mgf_trainer.save()
     predicted_mgf_lst = mgf_trainer.eval(theta_eval.reshape((-1, 1)))[:,0]
     true_mgf_lst = target_mgf_func(theta_eval.flatten())
@@ -155,7 +155,7 @@ plt.close()
 ## Comparing MGF against ground truth
 predicted_mgf_lst = mgf_trainer.eval(theta_lst.reshape((-1, 1)))[:,0]
 true_mgf_lst = target_mgf_func(theta_lst)
-diff_lst = torch.abs(predicted_mgf_lst - true_mgf_lst) ** 2
+diff_lst = torch.abs(predicted_mgf_lst - true_mgf_lst) / torch.abs(true_mgf_lst)
 plt.imshow(
     diff_lst.reshape((n_points_per_dim, n_points_per_dim)),
     extent=[EVAL_LB, EVAL_UB, EVAL_IMAG_LB, EVAL_IMAG_UB],  # [xmin, xmax, ymin, ymax]
@@ -165,10 +165,10 @@ plt.imshow(
     norm=LogNorm(vmin=diff_lst.min().item() + 1e-12, vmax=min(diff_lst.max().item(), 1e50))  # log scale
 )
 print(torch.mean(diff_lst))
-plt.colorbar(label='Squared Error')
+plt.colorbar(label='Relative Error')
 plt.xlabel('Re(s)')
 plt.ylabel('Im(s)')
-plt.title('MGF Prediction Squared Error')
+plt.title('MGF Prediction Relative Error')
 plt.savefig(f"Plots/{scheme}/mgf_error.png")
 plt.clf()
 plt.close()

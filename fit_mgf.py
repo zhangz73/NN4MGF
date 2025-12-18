@@ -142,62 +142,62 @@ class ComplexSine(nn.Module):
         return torch.sin(self.omega_0 * z)
 
 class FourierFeatures(nn.Module):
-    def __init__(self, in_dim=2, m=64, y_max=20.0):
-        """
-        m: number of frequencies
-        We build log-spaced frequencies; good for large |Im(s)|.
-        """
+    def __init__(self, num_features=32):
         super().__init__()
-        # Frequencies roughly covering [1, y_max] scale
-        freqs = torch.logspace(0, math.log10(max(2.0, y_max)), steps=m)
-        # Random directions in R^2
-        dirs = torch.randn(m, in_dim)
-        dirs = dirs / (dirs.norm(dim=1, keepdim=True) + 1e-12)
-        B = (freqs[:, None] * dirs)  # (m,2)
-#        scale = 1.0  # adjust based on |x| range
-#        B = B / B.norm(dim=1, keepdim=True) * scale
-        self.register_buffer("B", B)
+        if num_features % 2 != 0:
+            raise ValueError("num_features must be even")
+        half = num_features // 2
 
-    def forward(self, xy):
-        # xy: (N,2)
-        proj = 2.0 * math.pi * (xy @ self.B.T)  # (N,m)
-        return torch.cat([torch.cos(proj), torch.sin(proj)], dim=1)  # (N,2m)
-
-class LogGMFNet(nn.Module):
-    def __init__(self, ff_m=64, hidden=128, depth=3, y_max=20.0):
-        super().__init__()
-        self.ff = FourierFeatures(in_dim=2, m=ff_m, y_max=y_max)
-        in_dim = 2 * ff_m
-        layers = []
-        d = in_dim
-        for _ in range(depth):
-            layers += [nn.Linear(d, hidden), nn.SiLU()]
-            d = hidden
-        layers += [nn.Linear(d, 2)]  # outputs [u, v]
-        self.mlp = nn.Sequential(*layers)
-        
-        # --- scale all layers ---
-        for i, layer in enumerate(self.mlp):
-            if isinstance(layer, nn.Linear):
-                fan_in = layer.weight.shape[1]
-                if i == len(self.mlp)-1:  # last layer
-                    nn.init.uniform_(layer.weight, -0.1, 0.1)
-                    nn.init.uniform_(layer.bias, -0.1, 0.1)
-                else:
-                    scale = 1 / np.sqrt(fan_in)
-                    nn.init.uniform_(layer.weight, -scale, scale)
-                    nn.init.zeros_(layer.bias)
+        freqs_x = torch.logspace(0, 1, half, dtype=torch.float64)
+        freqs_y = torch.logspace(0, 2, half, dtype=torch.float64)
+        self.register_buffer("freqs_x", freqs_x)
+        self.register_buffer("freqs_y", freqs_y)
 
     def forward(self, x):
-        xy = torch.cat([x.real, x.imag], dim = 1)
-        z = self.ff(xy)
-        uv = self.mlp(z)
-        u, v = uv[:, 0], uv[:, 1]
-        # reconstruct complex g_hat
-        amp = torch.exp(u)
-        g_hat = torch.complex(amp * torch.cos(v), amp * torch.sin(v)).view((-1, 1))
-        return g_hat
+        # x: (N, 2)
+        x_coord = x[:, 0:1]
+        y_coord = x[:, 1:2]
 
+        xb = (2.0 * math.pi) * x_coord * self.freqs_x
+        yb = (2.0 * math.pi) * y_coord * self.freqs_y
+
+        return torch.cat([torch.sin(xb), torch.cos(xb), torch.sin(yb), torch.cos(yb)], dim=-1)
+
+class LogGMFNet(nn.Module):
+    def __init__(self, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
+        super().__init__()
+        self.ff = FourierFeatures(ff_m)
+        self.net = nn.Sequential(
+            nn.Linear(ff_m * 2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 2)  # (Re log g, Im log g)
+        )
+        self.X_MIN, self.X_MAX = x_min, x_max
+        self.Y_MIN, self.Y_MAX = y_min, y_max
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        x_coord = x.real
+        y_coord = x.imag
+
+        x_coord = 2.0 * (x_coord - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+        y_coord = 2.0 * (y_coord - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+        x_norm = torch.cat([x_coord, y_coord], dim=1)
+
+        raw = self.net(self.ff(x_norm))
+        raw = torch.complex(raw[:,0:1], raw[:,1:2])
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, 2, dtype = torch.double, device = x.device)
+            raw0 = self.net(self.ff(zero_point))
+            raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
+#            output = torch.exp(raw - raw0)
+            output = raw - raw0
+        else:
+#            output = torch.exp(raw)
+            output = raw
+        return output
 
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
@@ -364,12 +364,12 @@ class LinearNet(nn.Module):
         return output
     
 class MGFNet(nn.Module):
-    def __init__(self, d, hidden_dim = 64):
+    def __init__(self, d, hidden_dim = 64, x_min = -3, x_max = -0.5, y_min = -16, y_max = 0):
         super(MGFNet, self).__init__()
         self.d = d
         omega_0 = 1.0
-        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-#        self.interior_network = LogGMFNet() #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+#        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
+        self.interior_network = LogGMFNet(ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
 #            self.boundary_networks.append(PolyResNet(self.d-1, depth = 2, scale_by_zero = False))
@@ -416,7 +416,7 @@ class MGFNet(nn.Module):
             param.requires_grad = True
 
 class MGFTrainer:
-    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = "."):
+    def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = ".", x_min = -3, x_max = -0.5, y_min = -16, y_max = 0):
         self.d = d
         if torch.cuda.is_available():
             self.device = "cuda"
@@ -435,36 +435,47 @@ class MGFTrainer:
         """
         Penalizes negative slopes of the real part of a complex-valued model output.
         """
-        s.requires_grad_(True)
-        M_pred = model(s)  # complex output, shape [N, ...]
+        s_zero_imag = torch.complex(s.real, torch.zeros_like(s.imag).double())
+        s_zero_imag.requires_grad_(True)
+        M_pred = model(s_zero_imag)  # complex output, shape [N, ...]
         
         # Take the real part for monotonicity
         M_real = M_pred.real
         
         # Compute gradients w.r.t input
-        grad_real = torch.autograd.grad(M_real.sum(), s, create_graph=True)[0]
+        grad_real = torch.autograd.grad(M_real.sum(), s_zero_imag, create_graph=True)[0]
         
         # Penalize negative slopes
-        penalty = torch.relu(-grad_real.real).mean()
+        penalty = torch.relu(-grad_real.real).mean() + 0.1 * torch.mean(torch.abs(M_pred.imag) ** 2)
         return penalty
     
     def cauchy_riemann_penalty(self, model, z):
-        z = z.requires_grad_(True)
-        fz = model(z)          # complex output
+        """
+        Enforces Cauchy–Riemann equations by differentiating with respect
+        to real coordinates (x, y).
+
+        z: complex tensor of shape (N, d) or (N, 1)
+        model(z) -> complex output
+        """
+
+        # Split complex input into real variables
+        x = z.real.clone().detach().requires_grad_(True)
+        y = z.imag.clone().detach().requires_grad_(True)
+
+        z_xy = torch.complex(x, y)
+        fz = model(z_xy)
 
         u = fz.real
         v = fz.imag
 
-        # CR equations: u_x = v_y, u_y = -v_x
-        grad_u = torch.autograd.grad(u.sum(), z, create_graph=True)[0]
-        grad_v = torch.autograd.grad(v.sum(), z, create_graph=True)[0]
+        # Gradients w.r.t. real variables
+        u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
+        u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+        v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
+        v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
 
-        ux = grad_u.real
-        uy = grad_u.imag
-        vx = grad_v.real
-        vy = grad_v.imag
-
-        cr_penalty = torch.mean((ux - vy)**2 + (uy + vx)**2)
+        # Cauchy–Riemann residual
+        cr_penalty = torch.mean((u_x - v_y)**2 + (u_y + v_x)**2)
         return cr_penalty
     
     def growth_penalty(self, model, s, C=1.0):
@@ -506,6 +517,7 @@ class MGFTrainer:
         if full_gradient:
             assert theta_eval is not None
         optimizer = optim.Adam(self.model.parameters(), lr = init_lr)
+#        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
         scheduler = ExponentialLR(optimizer, gamma=0.99)
 #        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #            optimizer,
@@ -519,16 +531,20 @@ class MGFTrainer:
                 theta = theta_eval.clone()
             else:
                 theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
+#            if theta_eval is not None:
+#                anchors = theta_eval.clone()
+#                N = anchors.shape[0]
+#                idx = torch.randint(0, N, size=(batch_size,), device=anchors.device)
+#                anchors = anchors[idx]
+#                anchors.to(device = self.device)
+#                theta = torch.cat([theta, anchors], dim = 0)
             output = self.model(theta)
-            phi_theta = output[:,0].view((-1, 1))
+            log_phi_theta = output[:,0].view((-1, 1))
+            phi_theta = torch.exp(log_phi_theta)
             phi_i_theta = output[:,1:].view((-1, self.d))
-
             phi_theta_true = target_mgf_func(theta)
-#            loss = torch.mean(torch.abs(torch.log(phi_theta) - torch.log(phi_theta_true)) ** 2)
-            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
-#            loss_real = torch.mean(torch.abs(phi_theta.real - phi_theta_true.real) ** 2)
-#            loss_imag = torch.mean(torch.abs(phi_theta.imag - phi_theta_true.imag) ** 2)
-#            loss = loss_real + loss_imag
+            loss = torch.mean(torch.abs(log_phi_theta - torch.log(phi_theta_true)) ** 2)
+#            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             if lam_CR > 0:
@@ -649,6 +665,7 @@ class MGFTrainer:
         x = x.to(device = self.device)
         with torch.no_grad():
             output = self.model(x)
+            output[:,0] = torch.exp(output[:,0])
         return output.cpu()
     
     def save(self):

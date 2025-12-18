@@ -17,13 +17,13 @@ from inverse_laplace import InverseLaplace
 
 d = 1
 TRAIN_LB = -3
-TRAIN_UB = -0.5
+TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -16
-TRAIN_IMAG_UB = 0
+TRAIN_IMAG_UB = 16
 EVAL_LB = -3
-EVAL_UB = -0.5
+EVAL_UB = 0.5
 EVAL_IMAG_LB = -16
-EVAL_IMAG_UB = 0
+EVAL_IMAG_UB = 16
 RETRAIN = True
 S_LST = []
 

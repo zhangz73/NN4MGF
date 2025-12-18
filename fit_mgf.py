@@ -581,7 +581,7 @@ class MGFTrainer:
         plt.xlabel("Epoch")
         plt.ylabel("Log MSE")
         #plt.yscale("log")
-        plt.title(f"{loss_arr[-1]:.2e}")
+        plt.title(f"{log_loss_arr[-1]:.2e}")
         plt.savefig(f"Plots/{self.dir}/log_loss.png")
         plt.clf()
         plt.close()

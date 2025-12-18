@@ -496,11 +496,11 @@ class MGFTrainer:
 #        # Draw imaginary part independently
 #        imag_part = (imag_ub - imag_lb) * self.engine.draw(batch_size) + imag_lb
 #        imag_part = imag_part.double().to(device = self.device)
-        real_part = (ub - lb) * torch.rand(batch_size, device = self.device) + lb
+        real_part = (ub - lb) * torch.rand(batch_size, 1, device = self.device) + lb
         real_part = real_part.double().to(device = self.device)
 
         # Draw imaginary part independently
-        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, device = self.device) + imag_lb
+        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, 1, device = self.device) + imag_lb
         imag_part = imag_part.double().to(device = self.device)
 
         # Combine into complex tensor

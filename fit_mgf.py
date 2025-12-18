@@ -553,7 +553,7 @@ class MGFTrainer:
             loss = torch.mean(torch.abs(log_phi_theta - torch.log(phi_theta_true)) ** 2)
             log_loss_arr.append(loss.item())
             loss_rel = torch.mean(torch.abs(phi_theta - phi_theta_true) / torch.abs(phi_theta_true))
-            loss_rel_arr.append(loss_rel)
+            loss_rel_arr.append(loss_rel.item())
 #            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)

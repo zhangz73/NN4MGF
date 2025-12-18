@@ -490,11 +490,17 @@ class MGFTrainer:
 
     def sample_vector(self, lb=-1, ub=0, imag_lb=-0.5, imag_ub=0.5, batch_size=100):
         # Draw real part
-        real_part = (ub - lb) * self.engine.draw(batch_size) + lb
+#        real_part = (ub - lb) * self.engine.draw(batch_size) + lb
+#        real_part = real_part.double().to(device = self.device)
+#
+#        # Draw imaginary part independently
+#        imag_part = (imag_ub - imag_lb) * self.engine.draw(batch_size) + imag_lb
+#        imag_part = imag_part.double().to(device = self.device)
+        real_part = (ub - lb) * torch.rand(batch_size, device = device) + lb
         real_part = real_part.double().to(device = self.device)
 
         # Draw imaginary part independently
-        imag_part = (imag_ub - imag_lb) * self.engine.draw(batch_size) + imag_lb
+        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, device = device) + imag_lb
         imag_part = imag_part.double().to(device = self.device)
 
         # Combine into complex tensor
@@ -558,9 +564,9 @@ class MGFTrainer:
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             if lam_CR > 0:
-                loss_cr = lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+                loss_cr = self.cauchy_riemann_penalty(self.model, theta)
                 loss_cr_arr.append(loss_cr.item())
-                loss += loss_cr
+                loss += lam_CR * loss_cr
             if lam_growth > 0:
                 loss += lam_growth * self.growth_penalty(self.model, theta)
             if torch.isnan(loss):

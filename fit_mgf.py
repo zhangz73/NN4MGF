@@ -189,7 +189,11 @@ class LogGMFNet(nn.Module):
         raw = self.net(self.ff(x_norm))
         raw = torch.complex(raw[:,0:1], raw[:,1:2])
         if self.scale_by_zero:
-            zero_point = torch.zeros(1, 2, dtype = torch.double, device = x.device)
+            x_zero = torch.zeros_like(x_coord, dtype=torch.double)
+            y_zero = torch.zeros_like(y_coord, dtype=torch.double)
+            x_zero = 2.0 * (x_zero - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+            y_zero = 2.0 * (y_zero - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+            zero_point = torch.cat([x_zero, y_zero], dim=1) #torch.zeros(1, 2, dtype = torch.double, device = x.device)
             raw0 = self.net(self.ff(zero_point))
             raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
 #            output = torch.exp(raw - raw0)
@@ -517,8 +521,8 @@ class MGFTrainer:
         if full_gradient:
             assert theta_eval is not None
         optimizer = optim.Adam(self.model.parameters(), lr = init_lr)
-#        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
-        scheduler = ExponentialLR(optimizer, gamma=0.99)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
+#        scheduler = ExponentialLR(optimizer, gamma=0.99)
 #        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #            optimizer,
 #            T_0=100,       # number of steps before first restart
@@ -526,6 +530,7 @@ class MGFTrainer:
 #            eta_min=1e-6  # minimum LR
 #        )
         loss_arr = []
+        log_loss_arr = []
         for epoch in tqdm(range(num_epochs)):
             if full_gradient:
                 theta = theta_eval.clone()
@@ -544,6 +549,7 @@ class MGFTrainer:
             phi_i_theta = output[:,1:].view((-1, self.d))
             phi_theta_true = target_mgf_func(theta)
             loss = torch.mean(torch.abs(log_phi_theta - torch.log(phi_theta_true)) ** 2)
+            log_loss_arr.append(loss.item())
 #            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
@@ -564,10 +570,19 @@ class MGFTrainer:
         ## Evaluation
         plt.plot(loss_arr)
         plt.xlabel("Epoch")
-        plt.ylabel("Bar Loss")
+        plt.ylabel("Loss")
         #plt.yscale("log")
         plt.title(f"{loss_arr[-1]:.2e}")
         plt.savefig(f"Plots/{self.dir}/loss.png")
+        plt.clf()
+        plt.close()
+        
+        plt.plot(log_loss_arr)
+        plt.xlabel("Epoch")
+        plt.ylabel("Log MSE")
+        #plt.yscale("log")
+        plt.title(f"{loss_arr[-1]:.2e}")
+        plt.savefig(f"Plots/{self.dir}/log_loss.png")
         plt.clf()
         plt.close()
     

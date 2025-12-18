@@ -104,7 +104,7 @@ if RETRAIN:
     for t in tqdm(t_lst):
         tail_prob_predicted(mgf_trainer, t)
     theta_eval = -torch.tensor(S_LST, dtype=torch.cdouble).reshape((-1, 1))
-    mgf_trainer.train_from_target(target_mgf_func, full_gradient = False, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 1000, num_epochs = 2000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-2, lam_growth = 0)
+    mgf_trainer.train_from_target(target_mgf_func, full_gradient = False, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 1024, num_epochs = 5000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0)
     mgf_trainer.save()
     predicted_mgf_lst = mgf_trainer.eval(theta_eval.reshape((-1, 1)))[:,0]
     true_mgf_lst = target_mgf_func(theta_eval.flatten())

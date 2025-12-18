@@ -91,7 +91,7 @@ def tail_prob_predicted(model, t):
 
 ## Generate evaluation data
 n_points_per_dim = 20
-theta_real_lst = np.linspace(EVAL_LB, -EVAL_UB, n_points_per_dim)
+theta_real_lst = np.linspace(EVAL_LB, EVAL_UB, n_points_per_dim)
 theta_imag_lst = np.linspace(EVAL_IMAG_LB, EVAL_IMAG_UB, n_points_per_dim)
 X, Y = np.meshgrid(theta_real_lst, theta_imag_lst)
 theta_real_lst, theta_imag_lst = torch.from_numpy(X.ravel()).double(), torch.from_numpy(Y.ravel()).double()

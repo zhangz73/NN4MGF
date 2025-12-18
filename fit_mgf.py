@@ -531,6 +531,8 @@ class MGFTrainer:
 #        )
         loss_arr = []
         log_loss_arr = []
+        loss_rel_arr = []
+        loss_cr_arr = []
         for epoch in tqdm(range(num_epochs)):
             if full_gradient:
                 theta = theta_eval.clone()
@@ -550,11 +552,15 @@ class MGFTrainer:
             phi_theta_true = target_mgf_func(theta)
             loss = torch.mean(torch.abs(log_phi_theta - torch.log(phi_theta_true)) ** 2)
             log_loss_arr.append(loss.item())
+            loss_rel = torch.mean(torch.abs(phi_theta - phi_theta_true) / torch.abs(phi_theta_true))
+            loss_rel_arr.append(loss_rel)
 #            loss = torch.mean(torch.abs(phi_theta - phi_theta_true) ** 2)
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             if lam_CR > 0:
-                loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+                loss_cr = lam_CR * self.cauchy_riemann_penalty(self.model, theta)
+                loss_cr_arr.append(loss_cr.item())
+                loss += loss_cr
             if lam_growth > 0:
                 loss += lam_growth * self.growth_penalty(self.model, theta)
             if torch.isnan(loss):
@@ -583,6 +589,24 @@ class MGFTrainer:
         #plt.yscale("log")
         plt.title(f"{log_loss_arr[-1]:.2e}")
         plt.savefig(f"Plots/{self.dir}/log_loss.png")
+        plt.clf()
+        plt.close()
+        
+        plt.plot(loss_rel_arr)
+        plt.xlabel("Epoch")
+        plt.ylabel("Relative Error")
+        #plt.yscale("log")
+        plt.title(f"{loss_rel_arr[-1]:.2e}")
+        plt.savefig(f"Plots/{self.dir}/rel_loss.png")
+        plt.clf()
+        plt.close()
+        
+        plt.plot(loss_cr_arr)
+        plt.xlabel("Epoch")
+        plt.ylabel("CR Error")
+        #plt.yscale("log")
+        plt.title(f"{loss_cr_arr[-1]:.2e}")
+        plt.savefig(f"Plots/{self.dir}/cr_loss.png")
         plt.clf()
         plt.close()
     

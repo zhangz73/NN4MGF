@@ -29,14 +29,18 @@ S_LST = []
 
 K = 2
 LAM = 2
+DEGREE = 10
 
 MIN_REAL, MAX_REAL = float("inf"), -float("inf")
 MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
 
-scheme = f"d={d}/erlang"
+scheme = f"d={d}/erlang/talbot_deg={DEGREE}"
 
 os.makedirs(f"Plots/{scheme}", exist_ok=True)
 os.makedirs(f"Models/{scheme}", exist_ok=True)
+os.makedirs(f"Logs/{scheme}", exist_ok=True)
+
+f_log = open(f"Logs/{scheme}/logs.txt", "w")
 
 mp.dps = 100
 
@@ -87,7 +91,7 @@ def tail_prob_predicted(model, t):
         return (1.0 - val) / s
 
     # Invert this new transform directly
-    return mp.invertlaplace(tail_transform, t, method="talbot", degree=5)
+    return mp.invertlaplace(tail_transform, t, method="talbot", degree=DEGREE)
 
 ## Generate evaluation data
 n_points_per_dim = 20
@@ -104,7 +108,7 @@ if RETRAIN:
     for t in tqdm(t_lst):
         tail_prob_predicted(mgf_trainer, t)
     theta_eval = -torch.tensor(S_LST, dtype=torch.cdouble).reshape((-1, 1))
-    mgf_trainer.train_from_target(target_mgf_func, full_gradient = False, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 4096, num_epochs = 20000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0)
+    mgf_trainer.train_from_target(target_mgf_func, full_gradient = True, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 2048, num_epochs = 20000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0)
     mgf_trainer.save()
     predicted_mgf_lst = mgf_trainer.eval(theta_eval.reshape((-1, 1)))[:,0]
     true_mgf_lst = target_mgf_func(theta_eval.flatten())
@@ -115,6 +119,7 @@ if RETRAIN:
         pred = predicted_mgf_lst[i]
         diff = diff_lst[i]
         print(f"theta = {theta}: True MGF = {ans}, Predicted MGF = {pred}, diff = {diff:.2e}")
+        f_log.write(f"theta = {theta}: True MGF = {ans}, Predicted MGF = {pred}, diff = {diff:.2e}\n")
 else:
     mgf_trainer.load()
 
@@ -122,6 +127,8 @@ else:
 first_moment = mgf_trainer.get_first_moment()
 print("True mean:", K/LAM)
 print("Predicted mean from NN:", first_moment)
+f_log.write(f"True mean: {K/LAM}\n")
+f_log.write(f"Predicted mean from NN: {first_moment}\n")
 
 ## Visualize ground truth MGF
 true_mgf_lst = target_mgf_func(theta_lst)
@@ -188,6 +195,8 @@ for t in tqdm(t_lst):
 
 print("| t | Truth      | Prediction          | Absolute Error |")
 print("|---|------------|---------------------|----------------|")
+f_log.write("| t | Truth      | Prediction          | Absolute Error |\n")
+f_log.write("|---|------------|---------------------|----------------|\n")
 
 for i in range(len(t_lst)):
     t = t_lst[i]
@@ -195,6 +204,7 @@ for i in range(len(t_lst)):
     predicted = float(predicted_prob_lst[i])
     diff = float(diff_lst[i])
     print(f"| {t} | {ans:<10} | {predicted:.18f} | {diff:.2e} |")
+    f_log.write(f"| {t} | {ans:<10} | {predicted:.18f} | {diff:.2e} |\n")
 
 plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
 plt.plot(t_lst, predicted_prob_lst, label = "Predicted")

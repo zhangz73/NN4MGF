@@ -526,8 +526,8 @@ class MGFTrainer:
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
         if full_gradient:
             assert theta_eval is not None
-        optimizer = optim.Adam(self.model.parameters(), lr = init_lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
+        optimizer = optim.AdamW(self.model.parameters(), lr = init_lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=init_lr * 0.02)
 #        scheduler = ExponentialLR(optimizer, gamma=0.99)
 #        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #            optimizer,
@@ -542,15 +542,16 @@ class MGFTrainer:
         for epoch in tqdm(range(num_epochs)):
             if full_gradient:
                 theta = theta_eval.clone()
+                theta = theta.to(device = self.device)
             else:
                 theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
-            if theta_eval is not None:
-                anchors = theta_eval.clone()
-                # N = anchors.shape[0]
-                # idx = torch.randint(0, N, size=(batch_size,), device=anchors.device)
-                # anchors = anchors[idx]
-                anchors = anchors.to(device = self.device)
-                theta = torch.cat([theta, anchors], dim = 0)
+            # if theta_eval is not None:
+            #     anchors = theta_eval.clone()
+            #     N = anchors.shape[0]
+            #     idx = torch.randint(0, N, size=(batch_size,), device=anchors.device)
+            #     anchors = anchors[idx]
+            #     anchors = anchors.to(device = self.device)
+            #     theta = torch.cat([theta, anchors], dim = 0)
             output = self.model(theta)
             log_phi_theta = output[:,0].view((-1, 1))
             phi_theta = torch.exp(log_phi_theta)

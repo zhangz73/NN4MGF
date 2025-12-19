@@ -544,13 +544,13 @@ class MGFTrainer:
                 theta = theta_eval.clone()
             else:
                 theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
-#            if theta_eval is not None:
-#                anchors = theta_eval.clone()
-#                N = anchors.shape[0]
-#                idx = torch.randint(0, N, size=(batch_size,), device=anchors.device)
-#                anchors = anchors[idx]
-#                anchors.to(device = self.device)
-#                theta = torch.cat([theta, anchors], dim = 0)
+            if theta_eval is not None:
+                anchors = theta_eval.clone()
+                # N = anchors.shape[0]
+                # idx = torch.randint(0, N, size=(batch_size,), device=anchors.device)
+                # anchors = anchors[idx]
+                anchors = anchors.to(device = self.device)
+                theta = torch.cat([theta, anchors], dim = 0)
             output = self.model(theta)
             log_phi_theta = output[:,0].view((-1, 1))
             phi_theta = torch.exp(log_phi_theta)

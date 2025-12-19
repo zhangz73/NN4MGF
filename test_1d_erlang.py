@@ -16,12 +16,12 @@ from fit_mgf import *
 from inverse_laplace import InverseLaplace
 
 d = 1
-TRAIN_LB = -3
-TRAIN_UB = 0.5
-TRAIN_IMAG_LB = -16
-TRAIN_IMAG_UB = 16
-EVAL_LB = -3
-EVAL_UB = 0.5
+TRAIN_LB = -7
+TRAIN_UB = 7
+TRAIN_IMAG_LB = -5
+TRAIN_IMAG_UB = 5
+EVAL_LB = -7
+EVAL_UB = 7
 EVAL_IMAG_LB = -16
 EVAL_IMAG_UB = 16
 RETRAIN = True
@@ -87,7 +87,7 @@ def tail_prob_predicted(model, t):
         return (1.0 - val) / s
 
     # Invert this new transform directly
-    return mp.invertlaplace(tail_transform, t, method="dehoog", degree=5)
+    return mp.invertlaplace(tail_transform, t, method="talbot", degree=5)
 
 ## Generate evaluation data
 n_points_per_dim = 20

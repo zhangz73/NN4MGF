@@ -146,29 +146,46 @@ class FourierFeatures(nn.Module):
         super().__init__()
         if num_features % 2 != 0:
             raise ValueError("num_features must be even")
+        self.num_features = num_features
         half = num_features // 2
 
         freqs_x = torch.logspace(0, 1, half, dtype=torch.float64)
         freqs_y = torch.logspace(0, 2, half, dtype=torch.float64)
-        self.register_buffer("freqs_x", freqs_x)
-        self.register_buffer("freqs_y", freqs_y)
+
+        # Shape: (1, 1, half) for broadcasting
+        self.register_buffer("freqs_x", freqs_x.view(1, 1, -1))
+        self.register_buffer("freqs_y", freqs_y.view(1, 1, -1))
 
     def forward(self, x):
-        # x: (N, 2)
-        x_coord = x[:, 0:1]
-        y_coord = x[:, 1:2]
+        """
+        x: complex tensor of shape (N, d)
+        returns: real tensor of shape (N, d * num_features)
+        """
+        x_real = x.real.unsqueeze(-1)  # (N, d, 1)
+        x_imag = x.imag.unsqueeze(-1)  # (N, d, 1)
 
-        xb = (2.0 * math.pi) * x_coord * self.freqs_x
-        yb = (2.0 * math.pi) * y_coord * self.freqs_y
+        xb = 2.0 * math.pi * x_real * self.freqs_x  # (N, d, half)
+        yb = 2.0 * math.pi * x_imag * self.freqs_y  # (N, d, half)
 
-        return torch.cat([torch.sin(xb), torch.cos(xb), torch.sin(yb), torch.cos(yb)], dim=-1)
+        feats = torch.cat(
+            [
+                torch.sin(xb),
+                torch.cos(xb),
+                torch.sin(yb),
+                torch.cos(yb),
+            ],
+            dim=-1,  # (N, d, num_features)
+        )
+
+        return feats.view(x.shape[0], -1)  # (N, d * num_features)
 
 class LogGMFNet(nn.Module):
-    def __init__(self, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
+    def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
         super().__init__()
+        self.d = d
         self.ff = FourierFeatures(ff_m)
         self.net = nn.Sequential(
-            nn.Linear(ff_m * 2, hidden_dim),
+            nn.Linear(self.d * ff_m * 2, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -184,8 +201,8 @@ class LogGMFNet(nn.Module):
 
         x_coord = 2.0 * (x_coord - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
         y_coord = 2.0 * (y_coord - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
-        x_norm = torch.cat([x_coord, y_coord], dim=1)
-
+        x_norm = torch.complex(x_coord, y_coord) #torch.cat([x_coord, y_coord], dim=1)
+        
         raw = self.net(self.ff(x_norm))
         raw = torch.complex(raw[:,0:1], raw[:,1:2])
         if self.scale_by_zero:
@@ -193,13 +210,11 @@ class LogGMFNet(nn.Module):
             y_zero = torch.zeros_like(y_coord, dtype=torch.double)
             x_zero = 2.0 * (x_zero - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
             y_zero = 2.0 * (y_zero - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
-            zero_point = torch.cat([x_zero, y_zero], dim=1) #torch.zeros(1, 2, dtype = torch.double, device = x.device)
+            zero_point = torch.complex(x_zero, y_zero) #torch.cat([x_zero, y_zero], dim=1) #torch.zeros(1, 2, dtype = torch.double, device = x.device)
             raw0 = self.net(self.ff(zero_point))
             raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
-#            output = torch.exp(raw - raw0)
             output = raw - raw0
         else:
-#            output = torch.exp(raw)
             output = raw
         return output
 
@@ -373,11 +388,11 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-#            self.boundary_networks.append(PolyResNet(self.d-1, depth = 2, scale_by_zero = False))
-            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+#            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):
         phi = self.interior_network(x)
@@ -496,11 +511,11 @@ class MGFTrainer:
 #        # Draw imaginary part independently
 #        imag_part = (imag_ub - imag_lb) * self.engine.draw(batch_size) + imag_lb
 #        imag_part = imag_part.double().to(device = self.device)
-        real_part = (ub - lb) * torch.rand(batch_size, 1, device = self.device) + lb
+        real_part = (ub - lb) * torch.rand(batch_size, self.d, device = self.device) + lb
         real_part = real_part.double().to(device = self.device)
 
         # Draw imaginary part independently
-        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, 1, device = self.device) + imag_lb
+        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, self.d, device = self.device) + imag_lb
         imag_part = imag_part.double().to(device = self.device)
 
         # Combine into complex tensor
@@ -555,7 +570,8 @@ class MGFTrainer:
             output = self.model(theta)
             log_phi_theta = output[:,0].view((-1, 1))
             phi_theta = torch.exp(log_phi_theta)
-            phi_i_theta = output[:,1:].view((-1, self.d))
+            log_phi_i_theta = output[:,1:].view((-1, self.d))
+            phi_i_theta = torch.exp(log_phi_i_theta)
             phi_theta_true = target_mgf_func(theta)
             loss = torch.mean(torch.abs(log_phi_theta - torch.log(phi_theta_true)) ** 2)
             log_loss_arr.append(loss.item())
@@ -662,10 +678,12 @@ class MGFTrainer:
                 anchors.to(device = self.device)
                 theta = torch.cat([theta, anchors], dim = 0)
             output = self.model(theta)
-            phi_theta = output[:,0].view((-1, 1))
-            phi_i_theta = output[:,1:].view((-1, self.d))
+            log_phi_theta = output[:,0].view((-1, 1))
+            log_phi_i_theta = output[:,1:].view((-1, self.d))
+            phi_theta = torch.exp(log_phi_theta)
+            phi_i_theta = torch.exp(log_phi_i_theta)
 
-            loss = self.bar_loss(theta, phi_theta, phi_i_theta)
+            loss = self.bar_loss(theta, log_phi_theta, log_phi_i_theta)
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
             if lam_CR > 0:
@@ -711,7 +729,7 @@ class MGFTrainer:
         x = x.to(device = self.device)
         with torch.no_grad():
             output = self.model(x)
-            output[:,0] = torch.exp(output[:,0])
+            output = torch.exp(output)
         return output.cpu()
     
     def save(self):

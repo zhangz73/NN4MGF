@@ -71,7 +71,7 @@ def tail_prob_predicted(model, t):
         return (1 - val) / s
 
     # Invert this new transform directly
-    return mp.invertlaplace(tail_transform, t, method="dehoog") #"stehfest" #"cohen"
+    return mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen"
 
 def laplace_xsum(s):
     ## L(s) = \int_0^{\inf} f(t) e^{-st} dt

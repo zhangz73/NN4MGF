@@ -15,9 +15,9 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -10
-TRAIN_UB = 0
-TRAIN_IMAG_LB = -60
-TRAIN_IMAG_UB = 60
+TRAIN_UB = 10
+TRAIN_IMAG_LB = -10
+TRAIN_IMAG_UB = 10
 EVAL_LB = -10
 EVAL_UB = 0
 RETRAIN = True
@@ -78,6 +78,11 @@ def laplace_xsum(s):
     ##      = \int_0^{\inf} e^{-st} \int_0^t \int_0^{t-x1} \rho(x1, x2) dx1 dx2 dt
     ##      = 1/s \int_0^{inf} \int_0^{\inf} \rho(x1, x2) e^{-s(x1 + x2)} dx1 dx2
     # integrand for the 2D integral
+    global MIN_REAL, MAX_REAL, MIN_IMAG, MAX_IMAG
+    MIN_REAL = min(MIN_REAL, float(s.real))
+    MAX_REAL = max(MAX_REAL, float(s.real))
+    MIN_IMAG = min(MIN_IMAG, float(s.imag))
+    MAX_IMAG = max(MAX_IMAG, float(s.imag))
     if float(s) == 0:
         return 1.0
     def integrand(x1, x2):
@@ -109,9 +114,9 @@ def laplace_2d_to_xsum(model, s_lst):
     ans[~mask] = 1.0
     return ans
 
-def create_lattice(lb, ub, n_points_per_dim = 50):
-    x = np.linspace(lb, ub, n_points_per_dim)
-    y = np.linspace(lb, ub, n_points_per_dim)
+def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
+    x = np.linspace(real_lb, real_ub, n_points_per_dim)
+    y = np.linspace(imag_lb, imag_ub, n_points_per_dim)
     X, Y = np.meshgrid(x, y)
     lattice = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).double()
     return lattice
@@ -119,8 +124,8 @@ def create_lattice(lb, ub, n_points_per_dim = 50):
 ## Training
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
 if RETRAIN:
-    anchor_set = None #create_lattice(-200, -180, n_points_per_dim = 20)
-    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-5, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-8, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 1e-1, lam_CR = 1e-2, lam_growth = 0, anchor_set = anchor_set)
+    anchor_set = None
+    mgf_trainer.train(lb = TRAIN_LB - 0.5, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-5, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-8, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -152,13 +157,19 @@ plt.close()
 print("Real range:", MIN_REAL, MAX_REAL)
 print("Imag range:", MIN_IMAG, MAX_IMAG)
 
+MIN_REAL, MAX_REAL = float("inf"), -float("inf")
+MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
+
 ## Comparing Laplace transform of X1 + X2 against ground truth
-s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 10)[1:]
+s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
 true_laplace_lst = []
 for s in tqdm(s_lst):
     ans = laplace_xsum(float(s))
     true_laplace_lst.append(ans)
 predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
+
+print("Real range:", MIN_REAL, MAX_REAL)
+print("Imag range:", MIN_IMAG, MAX_IMAG)
 
 plt.scatter(s_lst, true_laplace_lst, label = "Ground Truth", color = "red")
 plt.plot(s_lst, predicted_laplace_lst, label = "Predicted")

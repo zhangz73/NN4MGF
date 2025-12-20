@@ -742,7 +742,7 @@ class MGFTrainer:
         self.model.load_state_dict(state_dict["model_state_dict"])
         self.model.to(device = self.device)
     
-    def plot_compare_heatmap(self, lb, ub, phi_theta, phi_theta_true, title):
+    def plot_compare_heatmap(self, real_lb, real_ub, imag_lb, imag_ub, phi_theta, phi_theta_true, title):
         n = int(len(phi_theta) ** 0.5)
         # Compute global min and max for color scale
         vmin = min(phi_theta.min(), phi_theta_true.min())
@@ -751,7 +751,7 @@ class MGFTrainer:
         # ---- Left plot: phi_theta ----
         im1 = axes[0].imshow(
             phi_theta.reshape((n, n)),
-            extent=(lb, ub, lb, ub),
+            extent=(real_lb, real_ub, imag_lb, imag_ub),
             origin="lower",
             aspect="auto",
             vmin=vmin,
@@ -764,7 +764,7 @@ class MGFTrainer:
         # ---- Right plot: phi_theta_true ----
         im2 = axes[1].imshow(
             phi_theta_true.reshape((n, n)),
-            extent=(lb, ub, lb, ub),
+            extent=(real_lb, real_ub, imag_lb, imag_ub),
             origin="lower",
             aspect="auto",
             vmin=vmin,

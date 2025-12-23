@@ -452,21 +452,29 @@ class MGFTrainer:
     # ---- Define monotonicity penalty ----
     def monotonicity_penalty(self, model, s):
         """
-        Penalizes negative slopes of the real part of a complex-valued model output.
+        Enforces that on the real axis:
+        1) Re(log M) is nondecreasing
+        2) Im(log M) = 0
         """
-        s_zero_imag = torch.complex(s.real, torch.zeros_like(s.imag).double())
-        s_zero_imag.requires_grad_(True)
-        M_pred = model(s_zero_imag)  # complex output, shape [N, ...]
-        
-        # Take the real part for monotonicity
-        M_real = M_pred.real
-        
-        # Compute gradients w.r.t input
-        grad_real = torch.autograd.grad(M_real.sum(), s_zero_imag, create_graph=True)[0]
-        
-        # Penalize negative slopes
-        penalty = torch.relu(-grad_real.real).mean() + 0.1 * torch.mean(torch.abs(M_pred.imag) ** 2)
-        return penalty
+        # Restrict to real axis
+        x = s.real.clone().detach().requires_grad_(True)
+        z = torch.complex(x, torch.zeros_like(x))
+
+        logM = model(z)  # complex log-MGF
+
+        # ---- (1) Monotonicity of Re(log M) ----
+        logM_real = logM.real
+        d_logM_dx = torch.autograd.grad(
+            logM_real.sum(), x, create_graph=True
+        )[0]
+
+        mono_penalty = torch.relu(-d_logM_dx).mean()
+
+        # ---- (2) Reality on real axis ----
+        imag_penalty = torch.mean(logM.imag ** 2)
+
+        return mono_penalty + 0.1 * imag_penalty
+
     
     def cauchy_riemann_penalty(self, model, z):
         """

@@ -391,7 +391,7 @@ class MGFNet(nn.Module):
         self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):

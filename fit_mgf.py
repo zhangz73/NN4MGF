@@ -695,11 +695,7 @@ class MGFTrainer:
         batch_size=500,
 
         # Joint phase
-        num_joint_epochs=10000,
-        joint_init_lr=1e-3,
-        joint_scheduler_T0=3000,
-        joint_scheduler_Tmult=1,
-        joint_scheduler_eta_min=1e-6,
+        joint_rounds=None,
 
         # Individual phase
         individual_rounds=None,
@@ -716,6 +712,9 @@ class MGFTrainer:
     ):
         if full_gradient:
             assert theta_eval is not None
+        
+        if joint_rounds is None:
+            joint_rounds = []
 
         if individual_rounds is None:
             individual_rounds = []
@@ -731,45 +730,50 @@ class MGFTrainer:
         # --------------------------------------------------
         # Joint training phase
         # --------------------------------------------------
-        optimizer = optim.Adam(self.model.parameters(), lr=joint_init_lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=joint_scheduler_T0,
-            T_mult=joint_scheduler_Tmult,
-            eta_min=joint_scheduler_eta_min,
-        )
+        for r, cfg in enumerate(joint_rounds):
+            epochs = cfg["epochs"]
+            lr = cfg["lr"]
+            T0 = cfg.get("T0", epochs)
+            eta_min = cfg.get("eta_min", 0.0)
+            optimizer = optim.Adam(self.model.parameters(), lr=lr)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=T0,
+                T_mult=1,
+                eta_min=eta_min,
+            )
 
-        for epoch in tqdm(range(num_joint_epochs), desc="Joint training"):
-            theta = theta_eval.clone() if full_gradient else \
-                    self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+            for epoch in tqdm(range(epochs), desc="Joint training"):
+                theta = theta_eval.clone() if full_gradient else \
+                        self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
 
-            output = self.model(theta)
-            log_phi_theta = output[:, 0:1]
-            log_phi_i_theta = output[:, 1:]
-            phi_theta = torch.exp(log_phi_theta)
-            phi_i_theta = torch.exp(log_phi_i_theta)
+                output = self.model(theta)
+                log_phi_theta = output[:, 0:1]
+                log_phi_i_theta = output[:, 1:]
+                phi_theta = torch.exp(log_phi_theta)
+                phi_i_theta = torch.exp(log_phi_i_theta)
 
-            # BAR loss in log space
-            bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+                # BAR loss in log space
+                bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
 
-            # Penalties
-            cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
-            loss = bar_mse + lam_CR * cr
+                # Penalties
+                cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+                loss = bar_mse + lam_CR * cr
 
-            if lam_monotone > 0:
-                loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
-            if lam_growth > 0:
-                loss += lam_growth * self.growth_penalty(self.model, theta)
+                if lam_monotone > 0:
+                    loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
+                if lam_growth > 0:
+                    loss += lam_growth * self.growth_penalty(self.model, theta)
 
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
 
-            total_loss_arr.append(loss.item())
-            bar_mse_arr.append(bar_mse.item())
-            cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
+                total_loss_arr.append(loss.item())
+                bar_mse_arr.append(bar_mse.item())
+                cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
 
         # --------------------------------------------------
         # Individual training rounds

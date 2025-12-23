@@ -840,7 +840,7 @@ class MGFTrainer:
             plt.close()
 
         save_plot(total_loss_arr, "total_loss", "Total Loss")
-        save_plot(bar_mse_loss, "bar_mse_loss", "BAR-MSE Loss")
+        save_plot(bar_mse_arr, "bar_mse_loss", "BAR-MSE Loss")
         save_plot(cr_loss_arr, "cr_loss", "CR Loss")
 
     

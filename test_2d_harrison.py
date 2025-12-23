@@ -126,10 +126,11 @@ mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128,
 if RETRAIN:
     anchor_set = None
     individual_rounds = [
-        dict(epochs=1000,  lr=1e-4, T0=100, eta_min=1e-7),
-        dict(epochs=2000, lr=1e-5, T0=500, eta_min=1e-8),
-    ]
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_joint_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 500, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_rounds = individual_rounds, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
+        dict(epochs=100,  lr=1e-3, T0=100, eta_min=1e-6)
+    ] * 10 + [
+        dict(epochs=1000, lr=1e-4, T0=1000, eta_min=1e-8)
+    ] * 5
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_joint_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_rounds = individual_rounds, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

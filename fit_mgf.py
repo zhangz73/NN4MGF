@@ -688,88 +688,161 @@ class MGFTrainer:
         plt.clf()
         plt.close()
     
-    def train(self, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, full_gradient = False, theta_eval = None, batch_size = 500, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-6, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4, anchor_set = None):
+    def train(
+        self,
+        lb=-1, ub=0, imag_lb=-0.5, imag_ub=0.5,
+        full_gradient=False, theta_eval=None,
+        batch_size=500,
+
+        # Joint phase
+        num_joint_epochs=10000,
+        joint_init_lr=1e-3,
+        joint_scheduler_T0=3000,
+        joint_scheduler_Tmult=1,
+        joint_scheduler_eta_min=1e-6,
+
+        # Individual phase
+        individual_rounds=None,
+        # example:
+        # individual_rounds = [
+        #   dict(epochs=800,  lr=5e-6, T0=200, eta_min=1e-7),
+        #   dict(epochs=1200, lr=2e-6, T0=300, eta_min=1e-8),
+        # ]
+
+        lam_monotone=0.0,
+        lam_CR=1e-2,
+        lam_growth=0.0,
+        anchor_set=None,
+    ):
         if full_gradient:
             assert theta_eval is not None
-        ## Training
-        optimizer = optim.Adam(self.model.parameters(), lr = joint_init_lr)
-#        scheduler = ExponentialLR(optimizer, gamma=0.99)
+
+        if individual_rounds is None:
+            individual_rounds = []
+
+        # --------------------------------------------------
+        # Logging containers
+        # --------------------------------------------------
+        total_loss_arr = []
+        log_mse_arr = []
+        bar_mse_arr = []
+        cr_loss_arr = []
+
+        # --------------------------------------------------
+        # Joint training phase
+        # --------------------------------------------------
+        optimizer = optim.Adam(self.model.parameters(), lr=joint_init_lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            T_0=joint_scheduler_T0,       # number of steps before first restart
-            T_mult=joint_scheduler_Tmult,     # how much T increases after restart
-            eta_min=joint_scheduler_eta_min #1e-6  # minimum LR
+            T_0=joint_scheduler_T0,
+            T_mult=joint_scheduler_Tmult,
+            eta_min=joint_scheduler_eta_min,
         )
-        loss_arr = []
-        prev_k = -1
-        train_idx = -1
-        for epoch in tqdm(range(num_epochs)):
-            if epoch >= num_joint_epochs:
-                k = ((epoch - 1 - num_joint_epochs) // num_individual_epochs) % (self.d + 1)   # network index to train
-                train_idx = k
-                if k != prev_k:
-                    # freeze all parameters
-                    self.model.freeze_all()
-                    # unfreeze only the chosen one
-                    if k == 0:
-                        self.model.unfreeze_interior()
-                    else:
-                        self.model.unfreeze_boundary_i(k-1)
-                    prev_k = k
-                    optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr = individual_init_lr)
-                    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                        optimizer,
-                        T_0=individual_scheduler_T0,       # number of steps before first restart
-                        T_mult=individual_scheduler_Tmult,     # how much T increases after restart
-                        eta_min=individual_scheduler_eta_min #1e-6  # minimum LR
-                    )
-            # ------------------------------------------------------
-            # Normal training code
-            # ------------------------------------------------------
-            if full_gradient:
-                theta = theta_eval.clone()
-            else:
-                theta = self.sample_vector(lb = lb, ub = ub, imag_lb=imag_lb, imag_ub=imag_ub, batch_size = batch_size)
-            if anchor_set is not None and len(anchor_set) > 0:
-                anchors = anchor_set.clone()
-                anchors.to(device = self.device)
-                theta = torch.cat([theta, anchors], dim = 0)
+
+        for epoch in tqdm(range(num_joint_epochs), desc="Joint training"):
+            theta = theta_eval.clone() if full_gradient else \
+                    self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+
             output = self.model(theta)
-            log_phi_theta = output[:,0].view((-1, 1))
-            log_phi_i_theta = output[:,1:].view((-1, self.d))
+            log_phi_theta = output[:, 0:1]
+            log_phi_i_theta = output[:, 1:]
             phi_theta = torch.exp(log_phi_theta)
             phi_i_theta = torch.exp(log_phi_i_theta)
-            
-            if epoch < num_joint_epochs:
-                loss = self.bar_loss(theta, phi_theta, phi_i_theta)
-            else:
-                loss = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = train_idx)
-            loss = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta)
+
+            # BAR loss in log space
+            bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+
+            # Penalties
+            cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+            loss = bar_mse + lam_CR * cr
+
             if lam_monotone > 0:
                 loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
-            if lam_CR > 0:
-                loss += lam_CR * self.cauchy_riemann_penalty(self.model, theta)
             if lam_growth > 0:
                 loss += lam_growth * self.growth_penalty(self.model, theta)
-            if torch.isnan(loss):
-                print("NaN produced in training.")
-                assert False
-            loss_arr.append(loss.item())
+
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
 
-        ## Evaluation
-        plt.plot(loss_arr)
-        plt.xlabel("Epoch")
-        plt.ylabel("Training Loss")
-        #plt.yscale("log")
-        plt.title(f"{loss_arr[-1]:.2e}")
-        plt.savefig(f"Plots/{self.dir}/loss.png")
-        plt.clf()
-        plt.close()
+            total_loss_arr.append(loss.item())
+            bar_mse_arr.append(bar_mse.item())
+            cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
+
+        # --------------------------------------------------
+        # Individual training rounds
+        # --------------------------------------------------
+        for r, cfg in enumerate(individual_rounds):
+            epochs = cfg["epochs"]
+            lr = cfg["lr"]
+            T0 = cfg.get("T0", epochs)
+            eta_min = cfg.get("eta_min", 0.0)
+
+            for k in range(self.d + 1):
+                self.model.freeze_all()
+                if k == 0:
+                    self.model.unfreeze_interior()
+                else:
+                    self.model.unfreeze_boundary_i(k - 1)
+
+                optimizer = optim.Adam(
+                    filter(lambda p: p.requires_grad, self.model.parameters()),
+                    lr=lr,
+                )
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer,
+                    T_0=T0,
+                    T_mult=1,
+                    eta_min=eta_min,
+                )
+
+                for _ in tqdm(range(epochs), desc=f"Round {r}, component {k}"):
+                    theta = theta_eval.clone() if full_gradient else \
+                            self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+
+                    output = self.model(theta)
+                    log_phi_theta = output[:, 0:1]
+                    log_phi_i_theta = output[:, 1:]
+                    phi_theta = torch.exp(log_phi_theta)
+                    phi_i_theta = torch.exp(log_phi_i_theta)
+
+                    log_mse = self.log_bar_loss(
+                        theta, log_phi_theta, log_phi_i_theta, train_idx=k
+                    )
+                    bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+
+                    cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+                    loss = log_mse + lam_CR * cr
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                    optimizer.step()
+                    scheduler.step()
+
+                    total_loss_arr.append(loss.item())
+                    bar_mse_arr.append(bar_mse.item())
+                    cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
+
+        # --------------------------------------------------
+        # Plot losses
+        # --------------------------------------------------
+        def save_plot(data, name, ylabel):
+            plt.plot(data)
+            plt.xlabel("Epoch")
+            plt.ylabel(ylabel)
+            plt.yscale("log")
+            plt.title(name)
+            plt.savefig(f"Plots/{self.dir}/{name}.png")
+            plt.clf()
+            plt.close()
+
+        save_plot(total_loss_arr, "total_loss", "Total Loss")
+        save_plot(log_mse_arr, "log_mse_loss", "Log-MSE Loss")
+        save_plot(cr_loss_arr, "cr_loss", "CR Loss")
+
     
     def get_first_moment(self):
         s0 = torch.zeros(

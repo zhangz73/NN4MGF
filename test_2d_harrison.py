@@ -125,7 +125,7 @@ def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
 if RETRAIN:
     anchor_set = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 18000, num_joint_epochs = 1000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 500, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_init_lr = 1e-4, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 1e-7, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1000, num_epochs = 15000, num_joint_epochs = 0, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 500, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 1e-6, individual_init_lr = 1e-4, individual_scheduler_T0 = 100, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 1e-7, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

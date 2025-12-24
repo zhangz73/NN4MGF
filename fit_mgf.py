@@ -255,18 +255,19 @@ class LogGMFNet(nn.Module):
     def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
         super().__init__()
         self.d = d
-#        self.ff = FourierFeatures(ff_m)
-        exp_scales = (0.5, 1.0)
-        poly_degree = 3
-        self.ff = MGFFeatures(
-            d=self.d,
-            num_imag_freqs=ff_m,
-            exp_scales=exp_scales,
-            poly_degree=poly_degree,
-        )
-        ## Input dim from Fourier features: self.d * ff_m * 2
+        self.ff = FourierFeatures(ff_m)
+#        exp_scales = (0.5, 1.0)
+#        poly_degree = 3
+#        self.ff = MGFFeatures(
+#            d=self.d,
+#            num_imag_freqs=ff_m,
+#            exp_scales=exp_scales,
+#            poly_degree=poly_degree,
+#        )
+        ## Input dim for MGFFeatures: (poly_degree + len(exp_scales) + 2 * ff_m) * self.d
+        ## Input dim for Fourier features: self.d * ff_m * 2
         self.net = nn.Sequential(
-            nn.Linear((poly_degree + len(exp_scales) + 2 * ff_m) * self.d, hidden_dim),
+            nn.Linear(self.d * ff_m * 2, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -549,7 +550,7 @@ class MGFTrainer:
             logM_real.sum(), x, create_graph=True
         )[0]
 
-        mono_penalty = torch.relu(-d_logM_dx).mean()
+        mono_penalty = torch.relu(-d_logM_dx).mean(dim=0).mean()
 
         # ---- (2) Reality on real axis ----
         imag_penalty = torch.mean(logM.imag ** 2)

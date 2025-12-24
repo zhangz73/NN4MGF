@@ -141,6 +141,78 @@ class ComplexSine(nn.Module):
     def forward(self, z):
         return torch.sin(self.omega_0 * z)
 
+class MGFFeatures(nn.Module):
+    """
+    MGF-specific feature map for complex inputs s = x + i y.
+
+    Produces features that respect:
+    - exponential growth in Re(s)
+    - oscillation in Im(s)
+    - analyticity (CR-friendly)
+    """
+
+    def __init__(
+        self,
+        d,
+        num_imag_freqs=16,
+        exp_scales=(0.5, 1.0),
+        poly_degree=3,
+    ):
+        """
+        d: dimension of input (number of s_i's)
+        num_imag_freqs: number of Fourier frequencies for Im(s)
+        exp_scales: scales for exp(alpha * Re(s))
+        poly_degree: max polynomial degree in Re(s)
+        """
+        super().__init__()
+        self.d = d
+        self.num_imag_freqs = num_imag_freqs
+        self.poly_degree = poly_degree
+
+        # Imaginary frequencies (shared across dimensions)
+        freqs = torch.logspace(0, 1, num_imag_freqs)
+        self.register_buffer("imag_freqs", freqs.view(1, 1, -1))
+
+        # Exponential scales
+        self.exp_scales = exp_scales
+
+        # Feature count per dimension
+        self.per_dim_features = (
+            poly_degree               # x, x^2, ..., x^p
+            + len(exp_scales)         # exp(alpha x)
+            + 2 * num_imag_freqs      # cos + sin
+        )
+
+    def forward(self, s):
+        """
+        s: complex tensor of shape (N, d)
+        returns: real tensor of shape (N, d * per_dim_features)
+        """
+        x = s.real.unsqueeze(-1)  # (N, d, 1)
+        y = s.imag.unsqueeze(-1)  # (N, d, 1)
+
+        feats = []
+
+        # ---- Real-axis polynomial features ----
+        for k in range(1, self.poly_degree + 1):
+            feats.append(x ** k)
+
+        # ---- Real-axis exponential features ----
+        for alpha in self.exp_scales:
+            feats.append(torch.exp(alpha * x))
+
+        # ---- Imaginary-axis Fourier features ----
+        yb = y * self.imag_freqs  # (N, d, F)
+        feats.append(torch.cos(yb))
+        feats.append(torch.sin(yb))
+
+        # Concatenate along last axis
+        feats = torch.cat(feats, dim=-1)  # (N, d, per_dim_features)
+
+        # Flatten per dimension
+        return feats.view(s.shape[0], -1)
+
+
 class FourierFeatures(nn.Module):
     def __init__(self, num_features=32):
         super().__init__()
@@ -183,9 +255,18 @@ class LogGMFNet(nn.Module):
     def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
         super().__init__()
         self.d = d
-        self.ff = FourierFeatures(ff_m)
+#        self.ff = FourierFeatures(ff_m)
+        exp_scales = (0.5, 1.0)
+        poly_degree = 3
+        self.ff = MGFFeatures(
+            d=self.d,
+            num_imag_freqs=ff_m,
+            exp_scales=exp_scales,
+            poly_degree=poly_degree,
+        )
+        ## Input dim from Fourier features: self.d * ff_m * 2
         self.net = nn.Sequential(
-            nn.Linear(self.d * ff_m * 2, hidden_dim),
+            nn.Linear((poly_degree + len(exp_scales) + 2 * ff_m) * self.d, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),

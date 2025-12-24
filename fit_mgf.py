@@ -195,11 +195,11 @@ class MGFFeatures(nn.Module):
 
         # ---- Real-axis polynomial features ----
         for k in range(1, self.poly_degree + 1):
-            feats.append(x ** k)
+            feats.append(k * torch.log(x))
 
         # ---- Real-axis exponential features ----
         for alpha in self.exp_scales:
-            feats.append(torch.exp(alpha * x))
+            feats.append(alpha * x)
 
         # ---- Imaginary-axis Fourier features ----
         yb = y * self.imag_freqs  # (N, d, F)

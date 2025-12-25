@@ -73,6 +73,14 @@ def tail_prob_predicted(model, t):
     # Invert this new transform directly
     return mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen"
 
+def mgf(s1, s2):
+    def integrand(x1, x2):
+        return density(x1, x2) * mp.exp(s1 * x1 + s2 * x2)
+
+    # do the double integral over [0, inf) x [0, inf)
+    val = mp.quad(lambda x1: mp.quad(lambda x2: integrand(x1,x2), [0, mp.inf]), [0, mp.inf])
+    return float(val)
+
 def laplace_xsum(s):
     ## L(s) = \int_0^{\inf} f(t) e^{-st} dt
     ##      = \int_0^{\inf} e^{-st} \int_0^t \int_0^{t-x1} \rho(x1, x2) dx1 dx2 dt

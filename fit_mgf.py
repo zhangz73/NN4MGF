@@ -214,48 +214,55 @@ class MGFFeatures(nn.Module):
 
 
 class FourierFeatures(nn.Module):
-    def __init__(self, num_features=32):
+    def __init__(self, d, num_features=32):
         super().__init__()
         if num_features % 2 != 0:
             raise ValueError("num_features must be even")
-        self.num_features = num_features
+
         half = num_features // 2
+        self.d = d
 
-        freqs_x = torch.logspace(0, 1, half, dtype=torch.float64)
-        freqs_y = torch.logspace(0, 2, half, dtype=torch.float64)
-
-        # Shape: (1, 1, half) for broadcasting
-        self.register_buffer("freqs_x", freqs_x.view(1, 1, -1))
-        self.register_buffer("freqs_y", freqs_y.view(1, 1, -1))
+        freqs = torch.logspace(0, 2, half, dtype=torch.float64)
+        self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):
-        """
-        x: complex tensor of shape (N, d)
-        returns: real tensor of shape (N, d * num_features)
-        """
         x_real = x.real.unsqueeze(-1)  # (N, d, 1)
         x_imag = x.imag.unsqueeze(-1)  # (N, d, 1)
 
-        xb = 2.0 * math.pi * x_real * self.freqs_x  # (N, d, half)
-        yb = 2.0 * math.pi * x_imag * self.freqs_y  # (N, d, half)
+        xb = 2 * math.pi * x_real * self.freqs   # (N, d, F)
+        yb = 2 * math.pi * x_imag * self.freqs   # (N, d, F)
+        
+        feats = [
+            torch.sin(xb), torch.cos(xb),
+            torch.sin(yb), torch.cos(yb),
+        ]
 
-        feats = torch.cat(
-            [
-                torch.sin(xb),
-                torch.cos(xb),
-                torch.sin(yb),
-                torch.cos(yb),
-            ],
-            dim=-1,  # (N, d, num_features)
-        )
+        # ---- pairwise cross-dim interaction features ----
+        for i in range(self.d):
+            for j in range(i + 1, self.d):
+                # shape (N, 1, 1) → broadcast to (N, d, 1)
+                xr = x_real[:, i:i+1]
+                yr = x_real[:, j:j+1]
 
-        return feats.view(x.shape[0], -1)  # (N, d * num_features)
+                pair = xr + yr                       # (N, 1, 1)
+#                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
+                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
+
+                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
+
+                feats += [
+                    torch.sin(pb),
+                    torch.cos(pb),
+                ]
+
+        feats = torch.cat(feats, dim=-1)  # all shapes now match: (N, d, ·)
+        return feats.view(x.shape[0], -1) ## num_features x d x (d+1)
 
 class LogGMFNet(nn.Module):
     def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
         super().__init__()
         self.d = d
-        self.ff = FourierFeatures(ff_m)
+        self.ff = FourierFeatures(d = self.d, num_features = ff_m)
 #        exp_scales = (0.5, 1.0)
 #        poly_degree = 3
 #        self.ff = MGFFeatures(
@@ -267,7 +274,7 @@ class LogGMFNet(nn.Module):
         ## Input dim for MGFFeatures: (poly_degree + len(exp_scales) + 2 * ff_m) * self.d
         ## Input dim for Fourier features: self.d * ff_m * 2
         self.net = nn.Sequential(
-            nn.Linear(self.d * ff_m * 2, hidden_dim),
+            nn.Linear(self.d * (self.d + 1) * ff_m, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -816,6 +823,7 @@ class MGFTrainer:
         log_mse_arr = []
         bar_mse_arr = []
         cr_loss_arr = []
+        mono_loss_arr = []
 
         # --------------------------------------------------
         # Joint training phase
@@ -849,12 +857,11 @@ class MGFTrainer:
 
                 # Penalties
                 cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
-                loss = bar_mse + log_bar_mse + lam_CR * cr
-
-                if lam_monotone > 0:
-                    loss += lam_monotone * self.monotonicity_penalty(self.model, theta)
-                if lam_growth > 0:
-                    loss += lam_growth * self.growth_penalty(self.model, theta)
+                
+                mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
+                growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                
+                loss = bar_mse + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -865,6 +872,7 @@ class MGFTrainer:
                 total_loss_arr.append(loss.item())
                 bar_mse_arr.append(bar_mse.item())
                 cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
+                mono_loss_arr.append(mono_loss.item() if torch.is_tensor(mono_loss) else 0.0)
 
         # --------------------------------------------------
         # Individual training rounds
@@ -937,6 +945,7 @@ class MGFTrainer:
         save_plot(total_loss_arr, "total_loss", "Total Loss")
         save_plot(bar_mse_arr, "bar_mse_loss", "BAR-MSE Loss")
         save_plot(cr_loss_arr, "cr_loss", "CR Loss")
+        save_plot(mono_loss_arr, "mono_loss", "Monotonicity Loss")
 
     
     def get_first_moment(self):

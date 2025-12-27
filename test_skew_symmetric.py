@@ -21,7 +21,7 @@ EVAL_LB = -1
 EVAL_UB = 0
 EVAL_IMAG_LB = -1
 EVAL_IMAG_UB = 1
-RETRAIN = True
+RETRAIN = False
 
 scheme = f"d={d}/skewed_symmetry"
 
@@ -59,6 +59,7 @@ def compute_alpha():
 ## Assume theta is N x d
 def compute_true_phi(theta):
     alpha = compute_alpha()
+    alpha = alpha.to(device = theta.device)
     print("alpha:", alpha)
     n = theta.shape[0]
     alpha_ratios = alpha / (alpha - theta)
@@ -132,10 +133,14 @@ else:
 phi_theta_true, phi_i_theta_true = compute_true_phi(theta_eval)
 with torch.no_grad():
     output = mgf_trainer.eval(theta_eval)
+    output = output.to(device = theta_eval.device)
     phi_theta = output[:,0]
     phi_i_theta = output[:,1:]
 print("Bar Loss (Model):", mgf_trainer.bar_loss(theta_eval, phi_theta, phi_i_theta))
 print("Bar Loss (Truth):", mgf_trainer.bar_loss(theta_eval, phi_theta_true, phi_i_theta_true))
+phi_theta, phi_i_theta = phi_theta.cpu(), phi_i_theta.cpu()
+phi_theta_true, phi_i_theta_true = phi_theta_true.cpu(), phi_i_theta_true.cpu()
+theta_eval = theta_eval.cpu()
 mgf_trainer.plot_compare(phi_theta, phi_theta_true, title = "Interior")
 if d == 2:
     mgf_trainer.plot_compare_heatmap(real_lb = EVAL_LB, real_ub = EVAL_UB, imag_lb = EVAL_IMAG_LB, imag_ub = EVAL_IMAG_UB, phi_theta = phi_theta, phi_theta_true = phi_theta_true, title = "Interior")

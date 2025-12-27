@@ -303,6 +303,10 @@ class LogGMFNet(nn.Module):
             raw0 = self.net(self.ff(zero_point))
             raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
             output = raw - raw0
+            # print(x)
+            # print(raw)
+            # print(raw0)
+            # assert False
         else:
             output = raw
         return output
@@ -477,7 +481,7 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
             self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
@@ -554,10 +558,10 @@ class MGFTrainer:
         # ---- (1) Monotonicity of Re(log M) ----
         logM_real = logM.real
         d_logM_dx = torch.autograd.grad(
-            logM_real.sum(), x, create_graph=True
+            logM_real.sum(), z, create_graph=True
         )[0]
 
-        mono_penalty = torch.relu(-d_logM_dx).mean(dim=0).mean()
+        mono_penalty = torch.relu(-d_logM_dx.real).mean(dim=0).mean()
 
         # ---- (2) Reality on real axis ----
         imag_penalty = torch.mean(logM.imag ** 2)
@@ -631,6 +635,8 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
+        scale_factor = torch.abs(lhs) + 1e-12
+        diff = diff / scale_factor
         return torch.mean(torch.abs(diff) ** 2)
     
     def log_bar_loss(self, theta, log_phi_theta, log_phi_i_theta, train_idx = 0):
@@ -855,13 +861,17 @@ class MGFTrainer:
                 bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
                 log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
 
+                s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
+                M0 = self.model(s0)[:,0]
+                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
+
                 # Penalties
                 cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
                 
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()

@@ -21,7 +21,7 @@ EVAL_LB = -1
 EVAL_UB = 0
 EVAL_IMAG_LB = -1
 EVAL_IMAG_UB = 1
-RETRAIN = False
+RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
 

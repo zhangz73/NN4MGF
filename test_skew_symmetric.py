@@ -13,8 +13,14 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-LB = -100
-UB = 0
+TRAIN_LB = -1
+TRAIN_UB = 0
+TRAIN_IMAG_LB = -1
+TRAIN_IMAG_UB = 1
+EVAL_LB = -1
+EVAL_UB = 0
+EVAL_IMAG_LB = -1
+EVAL_IMAG_UB = 1
 RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
@@ -57,7 +63,7 @@ def compute_true_phi(theta):
     n = theta.shape[0]
     alpha_ratios = alpha / (alpha - theta)
     phi_theta = torch.prod(alpha_ratios, dim = 1)
-    phi_i_theta = torch.zeros((n, d))
+    phi_i_theta = torch.zeros((n, d), dtype=torch.cdouble)
     for i in range(d):
 #        val = SIGMA[i,i] / (2 * R[i,i]) * alpha[i] * torch.prod(alpha_ratios, dim = 1) / (alpha_ratios[:,i])
         val = SIGMA[i,i] / (2 * R[i,i]) * phi_theta * (alpha[i] - theta[:,i])
@@ -92,19 +98,32 @@ print("R:", R)
 print("Sigma:", SIGMA)
 print("Mu:", MU)
 
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
+
 ## Generate evaluation data
-if d == 2:
+if False: #d == 2:
     n_points_per_dim = 50
     x = np.linspace(LB, UB, n_points_per_dim)
     y = np.linspace(LB, UB, n_points_per_dim)
     X, Y = np.meshgrid(x, y)
     theta_eval = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).float()
 else:
-    theta_eval = sample_vector(batch_size = 10000)
+    theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, batch_size = 10000)
 
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 256, dir = f"{scheme}")
 if RETRAIN:
-    mgf_trainer.train(lb = LB - 0.5, ub = UB, full_gradient = False, theta_eval = theta_eval, batch_size = 3000, num_epochs = 21000, num_joint_epochs = 10000, num_individual_epochs = 1000, joint_init_lr = 1e-3, joint_scheduler_T0 = 100, joint_scheduler_Tmult = 1, joint_scheduler_eta_min = 0, individual_init_lr = 1e-5, individual_scheduler_T0 = 500, individual_scheduler_Tmult = 1, individual_scheduler_eta_min = 0)
+    anchor_set = None
+    joint_rounds = [
+        dict(epochs=2000, lr=1e-3, T0=5000, eta_min=1e-6),
+#        dict(epochs=500, lr=1e-4, T0=5000, eta_min=1e-7),
+#        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
+    ]
+#    individual_rounds = [
+#        dict(epochs=5000,  lr=1e-3, T0=5000, eta_min=1e-6)
+#    ] * 3 + [
+#        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-8)
+#    ] * 3
+    individual_rounds = None
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -119,11 +138,11 @@ print("Bar Loss (Model):", mgf_trainer.bar_loss(theta_eval, phi_theta, phi_i_the
 print("Bar Loss (Truth):", mgf_trainer.bar_loss(theta_eval, phi_theta_true, phi_i_theta_true))
 mgf_trainer.plot_compare(phi_theta, phi_theta_true, title = "Interior")
 if d == 2:
-    mgf_trainer.plot_compare_heatmap(lb = LB, ub = UB, phi_theta = phi_theta, phi_theta_true = phi_theta_true, title = "Interior")
+    mgf_trainer.plot_compare_heatmap(real_lb = EVAL_LB, real_ub = EVAL_UB, imag_lb = EVAL_IMAG_LB, imag_ub = EVAL_IMAG_UB, phi_theta = phi_theta, phi_theta_true = phi_theta_true, title = "Interior")
 for i in range(d):
     mgf_trainer.plot_compare(phi_i_theta[:,i], phi_i_theta_true[:,i], title = f"Boundary {i}")
     if d == 2:
-        mgf_trainer.plot_compare_heatmap(lb = LB, ub = UB, phi_theta = phi_i_theta[:,i], phi_theta_true = phi_i_theta_true[:,i], title = f"Boundary {i}")
+        mgf_trainer.plot_compare_heatmap(real_lb = EVAL_LB, real_ub = EVAL_UB, imag_lb = EVAL_IMAG_LB, imag_ub = EVAL_IMAG_UB, phi_theta = phi_i_theta[:,i], phi_theta_true = phi_i_theta_true[:,i], title = f"Boundary {i}")
 
 ## Compare the density
 #inverse_laplace = InverseLaplace(mgf_trainer, dps = 100, pretty = True)

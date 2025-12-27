@@ -562,7 +562,7 @@ class MGFTrainer:
         # ---- (2) Reality on real axis ----
         imag_penalty = torch.mean(logM.imag ** 2)
 
-        return mono_penalty + 0.1 * imag_penalty
+        return mono_penalty #+ 0.1 * imag_penalty
 
     
     def cauchy_riemann_penalty(self, model, z):
@@ -983,48 +983,84 @@ class MGFTrainer:
     def plot_compare_heatmap(self, real_lb, real_ub, imag_lb, imag_ub, phi_theta, phi_theta_true, title):
         n = int(len(phi_theta) ** 0.5)
         # Compute global min and max for color scale
-        vmin = min(phi_theta.min(), phi_theta_true.min())
-        vmax = max(phi_theta.max(), phi_theta_true.max())
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        # ---- Left plot: phi_theta ----
-        im1 = axes[0].imshow(
-            phi_theta.reshape((n, n)),
+        vmin_real = min(phi_theta.real.min(), phi_theta_true.real.min())
+        vmax_real = max(phi_theta.real.max(), phi_theta_true.real.max())
+        vmin_imag = min(phi_theta.imag.min(), phi_theta_true.imag.min())
+        vmax_imag = max(phi_theta.imag.max(), phi_theta_true.imag.max())
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        # ---- Top left plot: phi_theta (Real) ----
+        im11 = axes[0, 0].imshow(
+            phi_theta.real.reshape((n, n)),
             extent=(real_lb, real_ub, imag_lb, imag_ub),
             origin="lower",
             aspect="auto",
-            vmin=vmin,
-            vmax=vmax
+            vmin=vmin_real,
+            vmax=vmax_real
         )
-        axes[0].set_title("Model")
-        axes[0].set_xlabel("x")
-        axes[0].set_ylabel("y")
-        fig.colorbar(im1, ax=axes[0])
-        # ---- Right plot: phi_theta_true ----
-        im2 = axes[1].imshow(
-            phi_theta_true.reshape((n, n)),
+        axes[0, 0].set_title("Model (Real)")
+        axes[0, 0].set_xlabel("x")
+        axes[0, 0].set_ylabel("y")
+        fig.colorbar(im11, ax=axes[0, 0])
+        # ---- Top left plot: phi_theta (Imag) ----
+        im12 = axes[0, 1].imshow(
+            phi_theta.imag.reshape((n, n)),
             extent=(real_lb, real_ub, imag_lb, imag_ub),
             origin="lower",
             aspect="auto",
-            vmin=vmin,
-            vmax=vmax
+            vmin=vmin_imag,
+            vmax=vmax_imag
         )
-        axes[1].set_title("Ground Truth")
-        axes[1].set_xlabel("x")
-        axes[1].set_ylabel("y")
-        fig.colorbar(im2, ax=axes[1])
+        axes[0, 1].set_title("Model (Imag)")
+        axes[0, 1].set_xlabel("x")
+        axes[0, 1].set_ylabel("y")
+        fig.colorbar(im12, ax=axes[0, 1])
+        # ---- Lower left plot: phi_theta_true (Real) ----
+        im21 = axes[1, 0].imshow(
+            phi_theta_true.real.reshape((n, n)),
+            extent=(real_lb, real_ub, imag_lb, imag_ub),
+            origin="lower",
+            aspect="auto",
+            vmin=vmin_real,
+            vmax=vmax_real
+        )
+        axes[1, 0].set_title("Ground Truth (Real)")
+        axes[1, 0].set_xlabel("x")
+        axes[1, 0].set_ylabel("y")
+        fig.colorbar(im21, ax=axes[1, 0])
+        # ---- Lower left plot: phi_theta_true (Imag) ----
+        im22 = axes[1, 1].imshow(
+            phi_theta_true.imag.reshape((n, n)),
+            extent=(real_lb, real_ub, imag_lb, imag_ub),
+            origin="lower",
+            aspect="auto",
+            vmin=vmin_imag,
+            vmax=vmax_imag
+        )
+        axes[1, 1].set_title("Ground Truth (Imag)")
+        axes[1, 1].set_xlabel("x")
+        axes[1, 1].set_ylabel("y")
+        fig.colorbar(im22, ax=axes[1, 1])
         plt.tight_layout()
         plt.savefig(f"Plots/{self.dir}/heatmap_{title.lower().replace(' ', '_')}.png")
         plt.clf()
         plt.close()
 
     def plot_compare(self, phi_theta, phi_theta_true, title):
-        min_val = min(torch.min(phi_theta).item(), torch.min(phi_theta_true).item())
-        max_val = max(torch.max(phi_theta).item(), torch.max(phi_theta_true).item())
-        plt.scatter(phi_theta, phi_theta_true)
-        plt.axline((min_val, min_val), (max_val, max_val), color = "red")
-        plt.xlabel("Model")
-        plt.ylabel("Ground Truth")
-        plt.title(title)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        min_val_real = min(torch.min(phi_theta.real).item(), torch.min(phi_theta_true.real).item())
+        max_val_real = max(torch.max(phi_theta.real).item(), torch.max(phi_theta_true.real).item())
+        min_val_imag = min(torch.min(phi_theta.imag).item(), torch.min(phi_theta_true.imag).item())
+        max_val_imag = max(torch.max(phi_theta.imag).item(), torch.max(phi_theta_true.imag).item())
+        axes[0].scatter(phi_theta.real, phi_theta_true.real)
+        axes[0].axline((min_val_real, min_val_real), (max_val_real, max_val_real), color = "red")
+        axes[0].set_xlabel("Model")
+        axes[0].set_ylabel("Ground Truth")
+        axes[0].set_title(title + " (Real)")
+        axes[1].scatter(phi_theta.imag, phi_theta_true.imag)
+        axes[1].axline((min_val_imag, min_val_imag), (max_val_imag, max_val_imag), color = "red")
+        axes[1].set_xlabel("Model")
+        axes[1].set_ylabel("Ground Truth")
+        axes[1].set_title(title + " (Imag)")
         plt.savefig(f"Plots/{self.dir}/{title.lower().replace(' ', '_')}.png")
         plt.clf()
         plt.close()

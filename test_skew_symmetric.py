@@ -63,7 +63,7 @@ def compute_true_phi(theta):
     n = theta.shape[0]
     alpha_ratios = alpha / (alpha - theta)
     phi_theta = torch.prod(alpha_ratios, dim = 1)
-    phi_i_theta = torch.zeros((n, d), dtype=torch.cdouble)
+    phi_i_theta = torch.zeros((n, d), dtype=torch.cdouble, device = theta.device)
     for i in range(d):
 #        val = SIGMA[i,i] / (2 * R[i,i]) * alpha[i] * torch.prod(alpha_ratios, dim = 1) / (alpha_ratios[:,i])
         val = SIGMA[i,i] / (2 * R[i,i]) * phi_theta * (alpha[i] - theta[:,i])

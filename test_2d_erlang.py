@@ -16,14 +16,14 @@ from fit_mgf import *
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -7
-TRAIN_UB = 7
-TRAIN_IMAG_LB = -5
-TRAIN_IMAG_UB = 5
-EVAL_LB = -7
-EVAL_UB = 7
-EVAL_IMAG_LB = -5
-EVAL_IMAG_UB = 5
+TRAIN_LB = -1
+TRAIN_UB = 1
+TRAIN_IMAG_LB = -1
+TRAIN_IMAG_UB = 1
+EVAL_LB = -1
+EVAL_UB = 1
+EVAL_IMAG_LB = -1
+EVAL_IMAG_UB = 1
 RETRAIN = True
 S_LST = []
 
@@ -44,18 +44,15 @@ def target_mgf_func(theta):
     for i in range(d):
         LAM = LAM_LST[i]
         K = K_LST[i]
-        mgf = mgf * (LAM / (LAM - theta)) ** K
+        mgf = mgf * (LAM / (LAM - theta[:,i])) ** K
     return mgf
 
 ## Training
 mgf_trainer = MGFTrainer(d = d, mu = None, sigma = None, R = None, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, batch_size = 10000)
 if RETRAIN:
-    mgf_trainer.train_from_target(target_mgf_func, full_gradient = True, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 2048, num_epochs = 20000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0)
+    mgf_trainer.train_from_target(target_mgf_func, full_gradient = True, theta_eval = theta_eval, lb = TRAIN_LB, ub = TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 2048, num_epochs = 5000, init_lr = 1e-3, lam_monotone = 0, lam_CR = 1e-1, lam_growth = 0)
     mgf_trainer.save()
-    predicted_mgf_lst = mgf_trainer.eval(theta_eval.reshape((-1, 1)))[:,0]
-    true_mgf_lst = target_mgf_func(theta_eval.flatten())
-    diff_lst = torch.abs(predicted_mgf_lst - true_mgf_lst)
 else:
     mgf_trainer.load()
 

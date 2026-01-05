@@ -237,26 +237,26 @@ class FourierFeatures(nn.Module):
             torch.sin(yb), torch.cos(yb),
         ]
 
-        # ---- pairwise cross-dim interaction features ----
-        for i in range(self.d):
-            for j in range(i + 1, self.d):
-                # shape (N, 1, 1) → broadcast to (N, d, 1)
-                xr = x_real[:, i:i+1]
-                yr = x_real[:, j:j+1]
-
-                pair = xr + yr                       # (N, 1, 1)
-#                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
-                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
-
-                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
-
-                feats += [
-                    torch.sin(pb),
-                    torch.cos(pb),
-                ]
+#        # ---- pairwise cross-dim interaction features ----
+#        for i in range(self.d):
+#            for j in range(i + 1, self.d):
+#                # shape (N, 1, 1) → broadcast to (N, d, 1)
+#                xr = x_real[:, i:i+1]
+#                yr = x_real[:, j:j+1]
+#
+#                pair = xr + yr                       # (N, 1, 1)
+##                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
+#                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
+#
+#                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
+#
+#                feats += [
+#                    torch.sin(pb),
+#                    torch.cos(pb),
+#                ]
 
         feats = torch.cat(feats, dim=-1)  # all shapes now match: (N, d, ·)
-        return feats.view(x.shape[0], -1) ## num_features x d x (d+1)
+        return feats.view(x.shape[0], -1) ## num_features x d x 2 ## num_features x d x (d+1)
 
 class LogGMFNet(nn.Module):
     def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
@@ -274,7 +274,7 @@ class LogGMFNet(nn.Module):
         ## Input dim for MGFFeatures: (poly_degree + len(exp_scales) + 2 * ff_m) * self.d
         ## Input dim for Fourier features: self.d * ff_m * 2
         self.net = nn.Sequential(
-            nn.Linear(self.d * (self.d + 1) * ff_m, hidden_dim),
+            nn.Linear(self.d * 2 * ff_m, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),

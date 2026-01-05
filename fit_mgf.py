@@ -635,7 +635,7 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
-        scale_factor = torch.abs(lhs) + 1e-12
+        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
         diff = diff / scale_factor
         return torch.mean(torch.abs(diff) ** 2)
     
@@ -649,6 +649,17 @@ class MGFTrainer:
             lhs_left = torch.sum(gamma_i_theta[:,:max(train_idx-1, 0)] * torch.exp(log_phi_i_theta[:,:max(train_idx-1, 0)]), dim = 1)
             lhs_right = torch.sum(gamma_i_theta[:,train_idx:] * torch.exp(log_phi_i_theta[:,train_idx:]), dim = 1)
             rhs = torch.log(gamma_theta * torch.exp(log_phi_theta) - lhs_left - lhs_right)
+        diff = (lhs - rhs)
+        return torch.mean(torch.abs(diff) ** 2)
+    
+    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta):
+        gamma_theta, gamma_i_theta = self.gamma(theta)
+        ## Comput scaling factor
+        with torch.no_grad():
+            left_scale = log_phi_theta.real
+            scale_factor = left_scale
+        lhs = gamma_theta * torch.exp(log_phi_theta - scale_factor)
+        rhs = torch.sum(gamma_i_theta * torch.exp(log_phi_i_theta - scale_factor.reshape((-1, 1))), dim = 1)
         diff = (lhs - rhs)
         return torch.mean(torch.abs(diff) ** 2)
     
@@ -859,11 +870,12 @@ class MGFTrainer:
 
                 # BAR loss in log space
                 bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+                bar_mse_norm = self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
                 log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
 
                 s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
                 M0 = self.model(s0)[:,0]
-                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
+                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 0
 
                 # Penalties
                 cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0

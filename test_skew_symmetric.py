@@ -17,10 +17,10 @@ TRAIN_LB = -0.5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -1
 TRAIN_IMAG_UB = 1
-EVAL_LB = -1
-EVAL_UB = 0.5
-EVAL_IMAG_LB = -1
-EVAL_IMAG_UB = 1
+EVAL_LB = -10
+EVAL_UB = 10
+EVAL_IMAG_LB = -5
+EVAL_IMAG_UB = 5
 RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
@@ -114,7 +114,7 @@ else:
 if RETRAIN:
     anchor_set = None
     joint_rounds = [
-        dict(epochs=2000, lr=1e-3, T0=5000, eta_min=1e-5),
+        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 #        dict(epochs=2000, lr=1e-4, T0=5000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]

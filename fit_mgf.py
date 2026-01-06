@@ -699,8 +699,8 @@ class MGFTrainer:
         diff = torch.abs(rhs - lhs)
 
         # --------- 3) Relative residual to keep things scale-free ----------
-        scale = lhs.abs() + rhs.abs() + eps   # (N,1)
-        diff = diff / scale         # (N,1)
+#        scale = lhs.abs() + rhs.abs() + eps   # (N,1)
+#        diff = diff / scale         # (N,1)
 
         return (diff ** 2).mean()
 
@@ -893,6 +893,7 @@ class MGFTrainer:
         bar_mse_arr = []
         cr_loss_arr = []
         mono_loss_arr = []
+        bar_mse_norm_arr = []
 
         # --------------------------------------------------
         # Joint training phase
@@ -945,6 +946,7 @@ class MGFTrainer:
 
                 total_loss_arr.append(loss.item())
                 bar_mse_arr.append(bar_mse.item())
+                bar_mse_norm_arr.append(bar_mse_norm.item())
                 cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
                 mono_loss_arr.append(mono_loss.item() if torch.is_tensor(mono_loss) else 0.0)
 
@@ -1018,6 +1020,7 @@ class MGFTrainer:
 
         save_plot(total_loss_arr, "total_loss", "Total Loss")
         save_plot(bar_mse_arr, "bar_mse_loss", "BAR-MSE Loss")
+        save_plot(bar_mse_norm_arr, "bar_mse_norm_loss", "Normalized Bar-MSE Loss")
         save_plot(cr_loss_arr, "cr_loss", "CR Loss")
         save_plot(mono_loss_arr, "mono_loss", "Monotonicity Loss")
 

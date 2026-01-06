@@ -18,7 +18,7 @@ class HolomorphicLinearOld(nn.Module):
         super().__init__()
         denom = max(in_features, 1)
         scale = (1 / denom) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(denom))) #0.01
-        scale *= 0.01
+        scale *= 0.1 #0.01
         self.weight = nn.Parameter(
             torch.empty(out_features, in_features, dtype=torch.cdouble).uniform_(-scale, scale)
         )
@@ -222,7 +222,7 @@ class FourierFeatures(nn.Module):
         half = num_features // 2
         self.d = d
 
-        freqs = torch.logspace(0, 2, half, dtype=torch.float64)
+        freqs = torch.logspace(-1, 1, half, dtype=torch.float64)
         self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):
@@ -237,23 +237,23 @@ class FourierFeatures(nn.Module):
             torch.sin(yb), torch.cos(yb),
         ]
 
-#        # ---- pairwise cross-dim interaction features ----
-#        for i in range(self.d):
-#            for j in range(i + 1, self.d):
-#                # shape (N, 1, 1) → broadcast to (N, d, 1)
-#                xr = x_real[:, i:i+1]
-#                yr = x_real[:, j:j+1]
-#
-#                pair = xr + yr                       # (N, 1, 1)
-##                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
-#                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
-#
-#                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
-#
-#                feats += [
-#                    torch.sin(pb),
-#                    torch.cos(pb),
-#                ]
+        # ---- pairwise cross-dim interaction features ----
+        for i in range(self.d):
+            for j in range(i + 1, self.d):
+                # shape (N, 1, 1) → broadcast to (N, d, 1)
+                xr = x_real[:, i:i+1]
+                yr = x_real[:, j:j+1]
+
+                pair = xr + yr                       # (N, 1, 1)
+#                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
+                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
+
+                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
+
+                feats += [
+                    torch.sin(pb),
+                    torch.cos(pb),
+                ]
 
         feats = torch.cat(feats, dim=-1)  # all shapes now match: (N, d, ·)
         return feats.view(x.shape[0], -1) ## num_features x d x 2 ## num_features x d x (d+1)
@@ -274,7 +274,7 @@ class LogGMFNet(nn.Module):
         ## Input dim for MGFFeatures: (poly_degree + len(exp_scales) + 2 * ff_m) * self.d
         ## Input dim for Fourier features: self.d * ff_m * 2
         self.net = nn.Sequential(
-            nn.Linear(self.d * 2 * ff_m, hidden_dim),
+            nn.Linear(self.d * (self.d + 1) * ff_m, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -543,60 +543,69 @@ class MGFTrainer:
         self.engine = SobolEngine(dimension=d)
     
     # ---- Define monotonicity penalty ----
-    def monotonicity_penalty(self, model, s):
+    def monotonicity_penalty(self, model, s, lambda_imag=0.1):
         """
         Enforces that on the real axis:
-        1) Re(log M) is nondecreasing
-        2) Im(log M) = 0
+          1) Re(log M_int) is nondecreasing in each real coordinate
+          2) Im(log M_int) ≈ 0
+        where M_int is the interior MGF (output[:, 0]).
         """
         # Restrict to real axis
-        x = s.real.clone().detach().requires_grad_(True)
-        z = torch.complex(x, torch.zeros_like(x))
+        x = s.real.clone().detach().requires_grad_(True)   # (N, d)
+        z = torch.complex(x, torch.zeros_like(x))          # (N, d)
 
-        logM = model(z)  # complex log-MGF
+        logM_all = model(z)            # (N, d+1) complex
+        logM_int = logM_all[:, 0:1]    # (N, 1) complex – interior only
 
-        # ---- (1) Monotonicity of Re(log M) ----
-        logM_real = logM.real
+        # ---- (1) Monotonicity of Re(log M_int) along each real coordinate ----
+        logM_real = logM_int.real      # (N, 1)
+
+        # Gradient of sum over batch wrt x → shape (N, d)
         d_logM_dx = torch.autograd.grad(
-            logM_real.sum(), z, create_graph=True
-        )[0]
+            logM_real.sum(), x, create_graph=True
+        )[0]                           # (N, d)
 
-        mono_penalty = torch.relu(-d_logM_dx.real).mean(dim=0).mean()
+        # For nondecreasing, we penalize negative slopes
+        mono_penalty = torch.relu(-d_logM_dx).mean()
 
-        # ---- (2) Reality on real axis ----
-        imag_penalty = torch.mean(logM.imag ** 2)
+        # ---- (2) Reality on real axis: Im(log M_int) ≈ 0 ----
+        imag_penalty = (logM_int.imag ** 2).mean()
 
-        return mono_penalty #+ 0.1 * imag_penalty
+        return mono_penalty + lambda_imag * imag_penalty
+
 
     
     def cauchy_riemann_penalty(self, model, z):
         """
-        Enforces Cauchy–Riemann equations by differentiating with respect
-        to real coordinates (x, y).
-
-        z: complex tensor of shape (N, d) or (N, 1)
-        model(z) -> complex output
+        Enforce CR for every output component of model(z).
+        z: complex (N, d)
+        model(z): complex (N, d+1)
         """
-
-        # Split complex input into real variables
         x = z.real.clone().detach().requires_grad_(True)
         y = z.imag.clone().detach().requires_grad_(True)
-
         z_xy = torch.complex(x, y)
-        fz = model(z_xy)
 
-        u = fz.real
-        v = fz.imag
+        fz = model(z_xy)  # (N, d+1)
+        u_all = fz.real
+        v_all = fz.imag
 
-        # Gradients w.r.t. real variables
-        u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
-        u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
-        v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
-        v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+        total_pen = 0.0
+        num_components = u_all.shape[1]
 
-        # Cauchy–Riemann residual
-        cr_penalty = torch.mean((u_x - v_y)**2 + (u_y + v_x)**2)
-        return cr_penalty
+        for k in range(num_components):
+            u = u_all[:, k:k+1]  # (N,1)
+            v = v_all[:, k:k+1]  # (N,1)
+
+            u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
+            u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+            v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
+            v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+
+            cr_res = (u_x - v_y)**2 + (u_y + v_x)**2
+            total_pen = total_pen + cr_res.mean()
+
+        return total_pen / num_components
+
     
     def growth_penalty(self, model, s, C=1.0):
         M = model(s)
@@ -635,8 +644,8 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
-        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
-        diff = diff / scale_factor
+#        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
+#        diff = diff / scale_factor
         return torch.mean(torch.abs(diff) ** 2)
     
     def log_bar_loss(self, theta, log_phi_theta, log_phi_i_theta, train_idx = 0):
@@ -652,16 +661,59 @@ class MGFTrainer:
         diff = (lhs - rhs)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta):
-        gamma_theta, gamma_i_theta = self.gamma(theta)
-        ## Comput scaling factor
-        with torch.no_grad():
-            left_scale = log_phi_theta.real
-            scale_factor = left_scale
-        lhs = gamma_theta * torch.exp(log_phi_theta - scale_factor)
-        rhs = torch.sum(gamma_i_theta * torch.exp(log_phi_i_theta - scale_factor.reshape((-1, 1))), dim = 1)
-        diff = (lhs - rhs)
-        return torch.mean(torch.abs(diff) ** 2)
+    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta, eps=1e-12):
+        """
+        BAR loss in log-space:
+            gamma(theta) * Phi(theta) = sum_i gamma_i(theta) * Phi_i(theta)
+
+        where Phi = exp(log_phi).
+        We exponentiate in a numerically stable way and measure a *relative*
+        residual so large magnitudes don't blow up the loss.
+        """
+        # gamma: complex coefficients from your model/problem
+        gamma_theta, gamma_i_theta = self.gamma(theta)   # gamma_theta: (N,), gamma_i_theta: (N,d)
+
+        # --------- 1) Per-sample shift in log-space to avoid overflow ----------
+        # We only need to shift the REAL parts; imaginary parts are phases.
+        # Collect all real logs for this sample: log_phi_theta and all log_phi_i_theta
+        # shapes: (N,1) and (N,d)
+#        with torch.no_grad():
+        real_logs = torch.cat([log_phi_theta.real, log_phi_i_theta.real], dim=1)  # (N, 1+d)
+
+        # For each sample n, alpha_n = max_j Re(log_phi_j(n))
+        alpha = real_logs.max(dim=1, keepdim=True)[0]  # (N,1)
+
+        # Shift logs by alpha: exp(log_phi - alpha) stays in a safe range
+        log_phi_theta_shifted = log_phi_theta - alpha      # (N,1) complex
+        log_phi_i_theta_shifted = log_phi_i_theta - alpha  # (N,d) complex
+
+        # --------- 2) Go back to value domain (but scaled) ----------
+        # Phi~ = exp(log_phi - alpha). True Phi = exp(alpha) * Phi~, but the common
+        # factor exp(alpha) cancels out in the BAR equation.
+        phi_theta_scaled = torch.exp(log_phi_theta_shifted)      # (N,1) complex
+        phi_i_theta_scaled = torch.exp(log_phi_i_theta_shifted)  # (N,d) complex
+
+        # BAR in terms of scaled Phi:
+        lhs = gamma_theta.unsqueeze(1) * phi_theta_scaled          # (N,1)
+        rhs = torch.sum(gamma_i_theta * phi_i_theta_scaled, dim=1, keepdim=True)  # (N,1)
+        diff = torch.abs(rhs - lhs)
+
+        # --------- 3) Relative residual to keep things scale-free ----------
+        scale = lhs.abs() + rhs.abs() + eps   # (N,1)
+        diff = diff / scale         # (N,1)
+
+        return (diff ** 2).mean()
+
+#    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta):
+#        gamma_theta, gamma_i_theta = self.gamma(theta)
+#        ## Comput scaling factor
+#        with torch.no_grad():
+#            left_scale = log_phi_theta.real
+#            scale_factor = left_scale
+#        lhs = gamma_theta * torch.exp(log_phi_theta - scale_factor)
+#        rhs = torch.sum(gamma_i_theta * torch.exp(log_phi_i_theta - scale_factor.reshape((-1, 1))), dim = 1)
+#        diff = (lhs - rhs)
+#        return torch.mean(torch.abs(diff) ** 2)
     
 #    def log_bar_loss(self, theta, log_phi, log_phi_i):
 #        """
@@ -875,7 +927,7 @@ class MGFTrainer:
 
                 s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
                 M0 = self.model(s0)[:,0]
-                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 0
+                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 1
 
                 # Penalties
                 cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
@@ -883,7 +935,7 @@ class MGFTrainer:
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()

@@ -14,8 +14,8 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -10
-TRAIN_UB = 10
+TRAIN_LB = -7
+TRAIN_UB = 7
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
@@ -130,11 +130,11 @@ def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
     return lattice
 
 ## Training
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 if RETRAIN:
     anchor_set = None
     joint_rounds = [
-        dict(epochs=2000, lr=1e-3, T0=5000, eta_min=1e-6),
+        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-6),
 #        dict(epochs=500, lr=1e-4, T0=5000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]

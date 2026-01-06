@@ -99,7 +99,7 @@ print("R:", R)
 print("Sigma:", SIGMA)
 print("Mu:", MU)
 
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}")
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 
 ## Generate evaluation data
 if False: #d == 2:

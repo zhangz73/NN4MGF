@@ -699,65 +699,10 @@ class MGFTrainer:
         diff = torch.abs(rhs - lhs)
 
         # --------- 3) Relative residual to keep things scale-free ----------
-#        scale = lhs.abs() + rhs.abs() + eps   # (N,1)
-#        diff = diff / scale         # (N,1)
+        scale = lhs.abs() + rhs.abs() + eps   # (N,1)
+        diff = diff / scale         # (N,1)
 
         return (diff ** 2).mean()
-
-#    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta):
-#        gamma_theta, gamma_i_theta = self.gamma(theta)
-#        ## Comput scaling factor
-#        with torch.no_grad():
-#            left_scale = log_phi_theta.real
-#            scale_factor = left_scale
-#        lhs = gamma_theta * torch.exp(log_phi_theta - scale_factor)
-#        rhs = torch.sum(gamma_i_theta * torch.exp(log_phi_i_theta - scale_factor.reshape((-1, 1))), dim = 1)
-#        diff = (lhs - rhs)
-#        return torch.mean(torch.abs(diff) ** 2)
-    
-#    def log_bar_loss(self, theta, log_phi, log_phi_i):
-#        """
-#        Overflow-safe BAR loss using max-normalization.
-#
-#        Returns: scalar real loss
-#        """
-#
-#        gamma_theta, gamma_i_theta = self.gamma(theta)
-#        eps = 1e-30
-#        # ----------------------------
-#        # Step 1: log-magnitudes a_j
-#        # ----------------------------
-#        # a0 = log |gamma * exp(log_phi)|
-#        a0 = torch.log(torch.abs(gamma_theta) + eps) + log_phi.real.squeeze(-1)  # (N,)
-#        # ai = log |gamma_i * exp(log_phi_i)|
-#        ai = torch.log(torch.abs(gamma_i_theta) + eps) + log_phi_i.real           # (N, d)
-#        # Stack for max
-#        a_all = torch.cat([a0.unsqueeze(1), ai], dim=1)  # (N, d+1)
-#        m = torch.max(a_all, dim=1, keepdim=True)[0]     # (N, 1)
-#
-#        # ----------------------------
-#        # Step 2: phases
-#        # ----------------------------
-#        phi0 = torch.angle(gamma_theta) + log_phi.imag.squeeze(-1)  # (N,)
-#        phii = torch.angle(gamma_i_theta) + log_phi_i.imag          # (N, d)
-#
-#        # ----------------------------
-#        # Step 3: scaled complex terms
-#        # ----------------------------
-#        t0 = torch.exp(a0.unsqueeze(1) - m) * torch.exp(1j * phi0.unsqueeze(1))  # (N, 1)
-#        ti = torch.exp(ai - m) * torch.exp(1j * phii)                             # (N, d)
-#
-#        # ----------------------------
-#        # Step 4: BAR residual
-#        # ----------------------------
-#        residual = t0 - torch.sum(ti, dim=1, keepdim=True)  # (N, 1)
-#
-#        # ----------------------------
-#        # Step 5: squared magnitude loss
-#        # ----------------------------
-#        loss = torch.mean(torch.abs(residual) ** 2)
-#        return loss
-
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
         if full_gradient:

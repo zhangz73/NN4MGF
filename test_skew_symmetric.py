@@ -14,11 +14,11 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -10
-TRAIN_UB = 10
+TRAIN_UB = 0
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
-EVAL_UB = 10
+EVAL_UB = 0
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
 RETRAIN = True
@@ -115,7 +115,7 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
-#        dict(epochs=2000, lr=1e-4, T0=5000, eta_min=1e-7),
+        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]
 #    individual_rounds = [

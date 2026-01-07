@@ -222,7 +222,7 @@ class FourierFeatures(nn.Module):
         half = num_features // 2
         self.d = d
 
-        freqs = torch.logspace(-2, 2, half, dtype=torch.float64)
+        freqs = torch.logspace(-4, 2, half, dtype=torch.float64)
         self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):
@@ -288,8 +288,8 @@ class LogGMFNet(nn.Module):
         x_coord = x.real
         y_coord = x.imag
 
-        x_coord = 2.0 * (x_coord - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
-        y_coord = 2.0 * (y_coord - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+        # x_coord = 2.0 * (x_coord - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+        # y_coord = 2.0 * (y_coord - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
         x_norm = torch.complex(x_coord, y_coord) #torch.cat([x_coord, y_coord], dim=1)
         
         raw = self.net(self.ff(x_norm))
@@ -297,8 +297,8 @@ class LogGMFNet(nn.Module):
         if self.scale_by_zero:
             x_zero = torch.zeros_like(x_coord, dtype=torch.double)
             y_zero = torch.zeros_like(y_coord, dtype=torch.double)
-            x_zero = 2.0 * (x_zero - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
-            y_zero = 2.0 * (y_zero - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+            # x_zero = 2.0 * (x_zero - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+            # y_zero = 2.0 * (y_zero - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
             zero_point = torch.complex(x_zero, y_zero) #torch.cat([x_zero, y_zero], dim=1) #torch.zeros(1, 2, dtype = torch.double, device = x.device)
             raw0 = self.net(self.ff(zero_point))
             raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])

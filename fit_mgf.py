@@ -829,6 +829,9 @@ class MGFTrainer:
 
         if individual_rounds is None:
             individual_rounds = []
+        
+        if anchor_set is not None:
+            anchor_set = anchor_set.to(device = self.device)
 
         # --------------------------------------------------
         # Logging containers
@@ -859,6 +862,8 @@ class MGFTrainer:
             for epoch in tqdm(range(epochs), desc="Joint training"):
                 theta = theta_eval.clone() if full_gradient else \
                         self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+                if anchor_set is not None and not full_gradient:
+                    theta = torch.cat([theta, anchor_set], dim = 0)
 
                 output = self.model(theta)
                 log_phi_theta = output[:, 0:1]
@@ -925,6 +930,9 @@ class MGFTrainer:
                 for _ in tqdm(range(epochs), desc=f"Round {r}, component {k}"):
                     theta = theta_eval.clone() if full_gradient else \
                             self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+                    
+                    if anchor_set is not None and not full_gradient:
+                        theta = torch.cat([theta, anchor_set], dim = 0)
 
                     output = self.model(theta)
                     log_phi_theta = output[:, 0:1]

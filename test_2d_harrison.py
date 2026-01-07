@@ -14,10 +14,10 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -7
-TRAIN_UB = 7
-TRAIN_IMAG_LB = -5
-TRAIN_IMAG_UB = 5
+TRAIN_LB = -0.5
+TRAIN_UB = 0.5
+TRAIN_IMAG_LB = -1
+TRAIN_IMAG_UB = 1
 EVAL_LB = -10
 EVAL_UB = 0
 RETRAIN = True
@@ -43,6 +43,8 @@ os.makedirs(f"Models/{scheme}", exist_ok=True)
 
 MIN_REAL, MAX_REAL = float("inf"), -float("inf")
 MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
+
+THETA_LST = []
 
 def density(x1, x2):
     C = math.pi ** (-0.5) * (2 * abs(MU1)) ** 1.5
@@ -107,10 +109,12 @@ def laplace_2d_to_xsum(model, s_lst):
     ##           = \int_0^{\inf} e^{-st} \int_0^t \int_0^{t-x1} \rho(x1, x2) dx2 dx1 dt
     ##           = 1/s \int_0^{inf} \int_0^{\inf} \rho(x1, x2) e^{-s(x1 + x2)} dx1 dx2
     ##           = 1/s L(s, s)
+    global THETA_LST
     batch_size = len(s_lst)
     input = torch.zeros((batch_size, 2), dtype=torch.cdouble)
     input[:,0] = s_lst
     input[:,1] = s_lst
+    THETA_LST.append(-input)
     with torch.no_grad():
         output = model.eval(-input)
         joint_laplace = output[:,0]
@@ -144,7 +148,13 @@ if RETRAIN:
 #        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-8)
 #    ] * 3
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
+    t_lst = list(range(1, 6))
+    for t in tqdm(t_lst):
+        predicted = tail_prob_predicted(mgf_trainer, t)
+    s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
+    predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
+    theta_eval = torch.cat(THETA_LST, dim = 0)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = theta_eval, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

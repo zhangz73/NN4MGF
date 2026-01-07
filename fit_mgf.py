@@ -819,6 +819,7 @@ class MGFTrainer:
         lam_monotone=0.0,
         lam_CR=1e-2,
         lam_growth=0.0,
+        lam_zero_anchor=0.1,
         anchor_set=None,
     ):
         if full_gradient:
@@ -878,7 +879,7 @@ class MGFTrainer:
 
                 s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
                 M0 = self.model(s0)[:,0]
-                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 1
+                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
 
                 # Penalties
                 cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
@@ -886,7 +887,7 @@ class MGFTrainer:
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse_norm + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -947,7 +948,7 @@ class MGFTrainer:
 
                     s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
                     M0 = self.model(s0)[:,0]
-                    anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 1
+                    anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
 
                     # Penalties
                     cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
@@ -955,7 +956,7 @@ class MGFTrainer:
                     mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                     growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                     
-                    loss = bar_mse_norm + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                    loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                     optimizer.zero_grad()
                     loss.backward()

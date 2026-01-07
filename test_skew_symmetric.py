@@ -115,15 +115,13 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
-        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
+#        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]
-#    individual_rounds = [
-#        dict(epochs=5000,  lr=1e-3, T0=5000, eta_min=1e-6)
-#    ] * 3 + [
-#        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-8)
-#    ] * 3
-    individual_rounds = None
+    individual_rounds = [
+        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
+    ] * 1
+#    individual_rounds = None
     mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:

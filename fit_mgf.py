@@ -940,13 +940,22 @@ class MGFTrainer:
                     phi_theta = torch.exp(log_phi_theta)
                     phi_i_theta = torch.exp(log_phi_i_theta)
 
-                    log_bar_mse = self.log_bar_loss(
-                        theta, log_phi_theta, log_phi_i_theta, train_idx=k
-                    )
+                    # BAR loss in log space
                     bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+                    bar_mse_norm = self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
+                    log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
 
+                    s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
+                    M0 = self.model(s0)[:,0]
+                    anchor_penalty = (torch.exp(M0) - 1.0).abs().mean() * 1
+
+                    # Penalties
                     cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
-                    loss = log_bar_mse + lam_CR * cr
+                    
+                    mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
+                    growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                    
+                    loss = bar_mse_norm + anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                     optimizer.zero_grad()
                     loss.backward()

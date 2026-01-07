@@ -13,10 +13,10 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -0.5
-TRAIN_UB = 0.5
-TRAIN_IMAG_LB = -1
-TRAIN_IMAG_UB = 1
+TRAIN_LB = -10
+TRAIN_UB = 10
+TRAIN_IMAG_LB = -5
+TRAIN_IMAG_UB = 5
 EVAL_LB = -10
 EVAL_UB = 10
 EVAL_IMAG_LB = -5

@@ -965,7 +965,9 @@ class MGFTrainer:
 
                     total_loss_arr.append(loss.item())
                     bar_mse_arr.append(bar_mse.item())
+                    bar_mse_norm_arr.append(bar_mse_norm.item())
                     cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
+                    mono_loss_arr.append(mono_loss.item() if torch.is_tensor(mono_loss) else 0.0)
 
         # --------------------------------------------------
         # Plot losses

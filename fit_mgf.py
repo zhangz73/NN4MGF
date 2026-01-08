@@ -222,7 +222,7 @@ class FourierFeatures(nn.Module):
         half = num_features // 2
         self.d = d
 
-        freqs = torch.logspace(-4, 2, half, dtype=torch.float64)
+        freqs = torch.logspace(-4, 1, half, dtype=torch.float64)
         self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):
@@ -680,8 +680,9 @@ class MGFTrainer:
 #        with torch.no_grad():
         real_logs = torch.cat([log_phi_theta.real, log_phi_i_theta.real], dim=1)  # (N, 1+d)
 
-        # For each sample n, alpha_n = max_j Re(log_phi_j(n))
-        alpha = real_logs.max(dim=1, keepdim=True)[0]  # (N,1)
+        with torch.no_grad():
+            # For each sample n, alpha_n = max_j Re(log_phi_j(n))
+            alpha = real_logs.max(dim=1, keepdim=True)[0]  # (N,1)
 
         # Shift logs by alpha: exp(log_phi - alpha) stays in a safe range
         log_phi_theta_shifted = log_phi_theta - alpha      # (N,1) complex
@@ -696,7 +697,7 @@ class MGFTrainer:
         # BAR in terms of scaled Phi:
         lhs = gamma_theta.unsqueeze(1) * phi_theta_scaled          # (N,1)
         rhs = torch.sum(gamma_i_theta * phi_i_theta_scaled, dim=1, keepdim=True)  # (N,1)
-        diff = torch.abs(rhs - lhs)
+        diff = torch.abs(rhs - lhs) * torch.exp(alpha)
 
         # --------- 3) Relative residual to keep things scale-free ----------
         scale = lhs.abs() + rhs.abs() + eps   # (N,1)

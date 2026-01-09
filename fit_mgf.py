@@ -303,10 +303,6 @@ class LogGMFNet(nn.Module):
             raw0 = self.net(self.ff(zero_point))
             raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
             output = raw - raw0
-            # print(x)
-            # print(raw)
-            # print(raw0)
-            # assert False
         else:
             output = raw
         return output
@@ -481,7 +477,7 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
             self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))

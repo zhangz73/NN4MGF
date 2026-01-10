@@ -15,11 +15,11 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -10
-TRAIN_UB = 2
+TRAIN_UB = 1.5
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
-EVAL_UB = 2
+EVAL_UB = 1.5
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
 RETRAIN = True
@@ -201,7 +201,7 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=20000, lr=1e-3, T0=20000, eta_min=3e-4),
+        dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),
         # Refine BAR fit
 #        dict(epochs=2000, lr=1e-4, T0=2000, eta_min=1e-5),
 #        # Final polishing

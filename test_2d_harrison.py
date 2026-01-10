@@ -14,10 +14,10 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -0.5
-TRAIN_UB = 0.5
-TRAIN_IMAG_LB = -1
-TRAIN_IMAG_UB = 1
+TRAIN_LB = -10
+TRAIN_UB = 2
+TRAIN_IMAG_LB = -5
+TRAIN_IMAG_UB = 5
 EVAL_LB = -10
 EVAL_UB = 0
 RETRAIN = True
@@ -138,7 +138,7 @@ mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128,
 if RETRAIN:
     anchor_set = None
     joint_rounds = [
-        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-6),
+        dict(epochs=20000, lr=1e-3, T0=20000, eta_min=3e-4),
 #        dict(epochs=500, lr=1e-4, T0=5000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]
@@ -154,7 +154,7 @@ if RETRAIN:
     s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
     predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
     theta_eval = torch.cat(THETA_LST, dim = 0)
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = theta_eval, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e-1, lam_CR = 1e-1, lam_growth = 0, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = theta_eval, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e2, lam_CR = 1e2, lam_growth = 0, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

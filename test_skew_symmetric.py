@@ -15,11 +15,11 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -10
-TRAIN_UB = 1.5
+TRAIN_UB = 1
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
-EVAL_UB = 1.5
+EVAL_UB = 1
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
 RETRAIN = True

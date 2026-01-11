@@ -14,12 +14,12 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -10
-TRAIN_UB = 1
+TRAIN_LB = -2
+TRAIN_UB = 2
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
-EVAL_UB = 1
+EVAL_UB = 2
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
 RETRAIN = True
@@ -203,7 +203,7 @@ if RETRAIN:
         # Warm-up / coarse fit
         dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),
         # Refine BAR fit
-        dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
+        #dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
 #        dict(epochs=2000, lr=1e-4, T0=2000, eta_min=1e-5),
 #        # Final polishing
 #        dict(epochs=2000, lr=3e-5, T0=2000, eta_min=1e-6),
@@ -278,7 +278,7 @@ if d == 2:
     MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
 
     ## Comparing Laplace transform of X1 + X2 against ground truth
-    s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
+    s_lst = torch.linspace(0, 10, steps = 11)[1:]
     true_laplace_lst = []
     for s in tqdm(s_lst):
         ans = laplace_xsum(float(s))

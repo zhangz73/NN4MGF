@@ -14,8 +14,8 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -1
-TRAIN_UB = 1
+TRAIN_LB = -10
+TRAIN_UB = 2
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
 EVAL_LB = -10
@@ -198,7 +198,7 @@ else:
     theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, batch_size = 10000)
 
 if RETRAIN:
-    anchor_set = None
+    anchor_set = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 1024)
     joint_rounds = [
         # Warm-up / coarse fit
         dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),

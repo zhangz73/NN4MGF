@@ -198,7 +198,9 @@ else:
     theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, batch_size = 10000)
 
 if RETRAIN:
-    anchor_set = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=TRAIN_IMAG_UB, batch_size = 1024)
+    #v1 = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=-1, batch_size = 512)
+    #v2 = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=1, imag_ub=TRAIN_IMAG_UB, batch_size = 512)
+    anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
         dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),

@@ -860,6 +860,9 @@ class MGFTrainer:
             for epoch in tqdm(range(epochs), desc="Joint training"):
                 theta = theta_eval.clone() if full_gradient else \
                         self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+                v1 = self.sample_vector(lb=0, ub=ub, imag_lb=imag_lb, imag_ub=-1, batch_size = 512)
+                v2 = self.sample_vector(lb=0, ub=ub, imag_lb=1, imag_ub=imag_ub, batch_size = 512)
+                anchor_set = torch.cat([v1, v2], dim=0)
                 if anchor_set is not None and not full_gradient:
                     theta = torch.cat([theta, anchor_set], dim = 0)
 

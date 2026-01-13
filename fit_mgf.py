@@ -608,25 +608,74 @@ class MGFTrainer:
         bound = torch.exp(-C * torch.norm(s, dim=1))
         bound = bound.unsqueeze(1)
         return torch.mean(torch.relu(torch.abs(M) - bound)**2)
+    
+    def sample_vector(
+        self,
+        lb=-1, ub=0, cutoff=0,
+        imag_lb=-0.5, imag_ub=0.5,
+        ex_lb=-0.1, ex_ub=0.1,
+        ex_imag_lb=-0.1, ex_imag_ub=0.1,
+        batch_size=100,
+        max_tries=10,
+    ):
+        """
+        Sample complex vectors with:
+          - 50% real ∈ [lb, cutoff]
+          - 50% real ∈ [cutoff, ub]
+          - exclude box:
+              real ∈ [ex_lb, ex_ub], imag ∈ [ex_imag_lb, ex_imag_ub]
+          - uniform elsewhere
 
-    def sample_vector(self, lb=-1, ub=0, imag_lb=-0.5, imag_ub=0.5, batch_size=100):
-        # Draw real part
-#        real_part = (ub - lb) * self.engine.draw(batch_size) + lb
-#        real_part = real_part.double().to(device = self.device)
-#
-#        # Draw imaginary part independently
-#        imag_part = (imag_ub - imag_lb) * self.engine.draw(batch_size) + imag_lb
-#        imag_part = imag_part.double().to(device = self.device)
-        real_part = (ub - lb) * torch.rand(batch_size, self.d, device = self.device) + lb
-        real_part = real_part.double().to(device = self.device)
+        Assumption: ex_lb >= cutoff
+        """
 
-        # Draw imaginary part independently
-        imag_part = (imag_ub - imag_lb) * torch.rand(batch_size, self.d, device = self.device) + imag_lb
-        imag_part = imag_part.double().to(device = self.device)
+        assert lb < cutoff < ub
+        assert ex_lb >= cutoff
 
-        # Combine into complex tensor
-        vec = torch.complex(real_part, imag_part)
-        return vec
+        half = batch_size // 2
+        counts = [half, batch_size - half]  # handle odd batch_size safely
+        real_ranges = [(lb, cutoff), (cutoff, ub)]
+
+        samples = []
+
+        for (r_lb, r_ub), need in zip(real_ranges, counts):
+            remaining = need
+
+            for _ in range(max_tries):
+                if remaining <= 0:
+                    break
+
+                # oversample to reduce rejection loops
+                n_try = int(remaining * 1.5) + 10
+
+                real = (r_ub - r_lb) * torch.rand(n_try, self.d, device=self.device).double() + r_lb
+                imag = (imag_ub - imag_lb) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb
+
+                # exclusion mask
+                inside_excluded = (
+                    (real >= ex_lb) & (real <= ex_ub) &
+                    (imag >= ex_imag_lb) & (imag <= ex_imag_ub)
+                ).all(dim=1)
+
+                keep = ~inside_excluded
+                real_keep = real[keep]
+                imag_keep = imag[keep]
+
+                take = min(real_keep.shape[0], remaining)
+                if take > 0:
+                    samples.append(
+                        torch.complex(real_keep[:take], imag_keep[:take])
+                    )
+                    remaining -= take
+
+            if remaining > 0:
+                raise RuntimeError(
+                    "Failed to sample enough points outside excluded region. "
+                    "Increase max_tries or reduce excluded box."
+                )
+
+        return torch.cat(samples, dim=0)
+
     
     ## Assume theta is a N x d matrix
     def gamma(self, theta):
@@ -798,7 +847,8 @@ class MGFTrainer:
     
     def train(
         self,
-        lb=-1, ub=0, imag_lb=-0.5, imag_ub=0.5,
+        lb=-1, ub=0, cutoff=0, imag_lb=-0.5, imag_ub=0.5,
+        ex_lb=-0.1, ex_ub=0.1, ex_imag_lb=-0.1, ex_imag_ub=0.1,
         full_gradient=False, theta_eval=None,
         batch_size=500,
 
@@ -859,10 +909,7 @@ class MGFTrainer:
 
             for epoch in tqdm(range(epochs), desc="Joint training"):
                 theta = theta_eval.clone() if full_gradient else \
-                        self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
-                v1 = self.sample_vector(lb=0, ub=ub, imag_lb=imag_lb, imag_ub=-1, batch_size = 512)
-                v2 = self.sample_vector(lb=0, ub=ub, imag_lb=1, imag_ub=imag_ub, batch_size = 512)
-                anchor_set = torch.cat([v1, v2], dim=0)
+                        self.sample_vector(lb=lb, ub=ub, cutoff=cutoff, imag_lb=imag_lb, imag_ub=imag_ub, ex_lb=ex_lb, ex_ub=ex_ub, ex_imag_lb=ex_imag_lb, ex_imag_ub=ex_imag_ub, batch_size=batch_size)
                 if anchor_set is not None and not full_gradient:
                     theta = torch.cat([theta, anchor_set], dim = 0)
 
@@ -930,7 +977,7 @@ class MGFTrainer:
 
                 for _ in tqdm(range(epochs), desc=f"Round {r}, component {k}"):
                     theta = theta_eval.clone() if full_gradient else \
-                            self.sample_vector(lb, ub, imag_lb, imag_ub, batch_size)
+                            self.sample_vector(lb=lb, ub=ub, cutoff=cutoff, imag_lb=imag_lb, imag_ub=imag_ub, ex_lb=ex_lb, ex_ub=ex_ub, ex_imag_lb=ex_imag_lb, ex_imag_ub=ex_imag_ub, batch_size=batch_size)
                     
                     if anchor_set is not None and not full_gradient:
                         theta = torch.cat([theta, anchor_set], dim = 0)

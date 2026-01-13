@@ -16,8 +16,13 @@ from inverse_laplace import InverseLaplace
 d = 2
 TRAIN_LB = -10
 TRAIN_UB = 2
+TRAIN_CUTOFF = 0
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5
+EX_LB = 0
+EX_UB = 2
+EX_IMAG_LB = -1
+EX_IMAG_UB = 1
 EVAL_LB = -10
 EVAL_UB = 2
 EVAL_IMAG_LB = -5
@@ -195,11 +200,9 @@ if False: #d == 2:
     X, Y = np.meshgrid(x, y)
     theta_eval = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).float()
 else:
-    theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, batch_size = 10000)
+    theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, cutoff=(EVAL_LB+EVAL_UB)/2, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, ex_lb=EX_LB, ex_ub=EX_UB, ex_imag_lb=EX_IMAG_LB, ex_imag_ub=EX_IMAG_UB, batch_size = 10000)
 
 if RETRAIN:
-    #v1 = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=TRAIN_IMAG_LB, imag_ub=-1, batch_size = 512)
-    #v2 = mgf_trainer.sample_vector(lb=0, ub=TRAIN_UB, imag_lb=1, imag_ub=TRAIN_IMAG_UB, batch_size = 512)
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
@@ -227,7 +230,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, cutoff = TRAIN_CUTOFF, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, ex_lb=EX_LB, ex_ub=EX_UB, ex_imag_lb=EX_IMAG_LB, ex_imag_ub=EX_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

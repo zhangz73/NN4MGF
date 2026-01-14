@@ -742,7 +742,7 @@ class MGFTrainer:
         # BAR in terms of scaled Phi:
         lhs = gamma_theta.unsqueeze(1) * phi_theta_scaled          # (N,1)
         rhs = torch.sum(gamma_i_theta * phi_i_theta_scaled, dim=1, keepdim=True)  # (N,1)
-        diff = torch.abs(rhs - lhs) #* torch.exp(alpha)
+        diff = torch.abs(rhs - lhs) * torch.exp(alpha)
 
         # --------- 3) Relative residual to keep things scale-free ----------
         scale = (lhs.abs() + rhs.abs() + eps).detach()   # (N,1)

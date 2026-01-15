@@ -658,8 +658,8 @@ class MGFTrainer:
                 ).all(dim=1)
 
                 keep = ~inside_excluded
-                real_keep = real[keep]
-                imag_keep = imag[keep]
+                real_keep = real #real[keep]
+                imag_keep = imag #imag[keep]
 
                 take = min(real_keep.shape[0], remaining)
                 if take > 0:

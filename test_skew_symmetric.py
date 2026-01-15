@@ -15,7 +15,7 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -10
-TRAIN_UB = 2
+TRAIN_UB = 10
 TRAIN_CUTOFF = 0
 TRAIN_IMAG_LB = -5
 TRAIN_IMAG_UB = 5

@@ -16,14 +16,14 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -3
-TRAIN_UB = 3
-TRAIN_IMAG_LB = -3
-TRAIN_IMAG_UB = 3
-EVAL_LB = -3
-EVAL_UB = 3
-EVAL_IMAG_LB = -3
-EVAL_IMAG_UB = 3
+TRAIN_LB = -5
+TRAIN_UB = 0
+TRAIN_IMAG_LB = -16
+TRAIN_IMAG_UB = 16
+EVAL_LB = -5
+EVAL_UB = 0
+EVAL_IMAG_LB = -16
+EVAL_IMAG_UB = 16
 RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
@@ -164,7 +164,8 @@ def tail_prob_predicted(model, t):
         return (1 - val) / s
 
     # Invert this new transform directly
-    return improved_talbot_eq16(tail_transform, t, N = 5) #mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen"
+    # improved_talbot_eq16(tail_transform, t, N = 5)
+    return mp.invertlaplace(tail_transform, t, method="dehoog", degree = 5) #"stehfest" #"cohen"
 
 def mgf(s1, s2):
     def integrand(x1, x2):
@@ -227,7 +228,7 @@ print("Mu:", MU)
 
 excluded_boxes = []
 for real_pole in set(alpha):
-    excluded_boxes.append((real_pole - 0.5, real_pole + 0.5, -1, 1))
+    excluded_boxes.append((float(real_pole) - 1, float(real_pole) + 1, -1, 1))
 
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 
@@ -259,7 +260,7 @@ if RETRAIN:
     lam_monotone = 1e2
     lam_CR = 1e2
     lam_growth = 0
-    lam_zero_anchor = 1e1
+    lam_zero_anchor = 1e-1
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
@@ -322,7 +323,7 @@ if d == 2:
     MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
 
     ## Comparing Laplace transform of X1 + X2 against ground truth
-    s_lst = torch.linspace(0, 10, steps = 11)[1:]
+    s_lst = torch.linspace(0, 5, steps = 6)[1:]
     true_laplace_lst = []
     for s in tqdm(s_lst):
         ans = laplace_xsum(float(s))

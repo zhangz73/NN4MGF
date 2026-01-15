@@ -611,71 +611,70 @@ class MGFTrainer:
     
     def sample_vector(
         self,
-        lb=-1, ub=0, cutoff=0,
+        lb=-1, ub=0,
         imag_lb=-0.5, imag_ub=0.5,
-        ex_lb=-0.1, ex_ub=0.1,
-        ex_imag_lb=-0.1, ex_imag_ub=0.1,
+        excluded_boxes=None,
         batch_size=100,
-        max_tries=10,
+        max_tries=20,
     ):
         """
-        Sample complex vectors with:
-          - 50% real ∈ [lb, cutoff]
-          - 50% real ∈ [cutoff, ub]
-          - exclude box:
-              real ∈ [ex_lb, ex_ub], imag ∈ [ex_imag_lb, ex_imag_ub]
-          - uniform elsewhere
+        Sample complex vectors uniformly from:
+            real ∈ [lb, ub], imag ∈ [imag_lb, imag_ub]
 
-        Assumption: ex_lb >= cutoff
+        while excluding ANY point that falls inside one of the excluded boxes.
+
+        excluded_boxes: list of tuples
+            [
+                (ex_lb, ex_ub, ex_imag_lb, ex_imag_ub),
+                ...
+            ]
+
+        Each exclusion applies coordinate-wise and jointly across dimensions:
+            real[:, j] ∈ [ex_lb, ex_ub] AND
+            imag[:, j] ∈ [ex_imag_lb, ex_imag_ub] for ALL j
         """
 
-        assert lb < cutoff < ub
-        assert ex_lb >= cutoff
-
-        half = batch_size // 2
-        counts = [half, batch_size - half]  # handle odd batch_size safely
-        real_ranges = [(lb, cutoff), (cutoff, ub)]
+        if excluded_boxes is None:
+            excluded_boxes = []
 
         samples = []
+        remaining = batch_size
 
-        for (r_lb, r_ub), need in zip(real_ranges, counts):
-            remaining = need
+        for _ in range(max_tries):
+            if remaining <= 0:
+                break
 
-            for _ in range(max_tries):
-                if remaining <= 0:
-                    break
+            # oversample to reduce rejection loops
+            n_try = int(remaining * 1.5) + 16
 
-                # oversample to reduce rejection loops
-                n_try = int(remaining * 1.5) + 10
+            real = (ub - lb) * torch.rand(n_try, self.d, device=self.device).double() + lb
+            imag = (imag_ub - imag_lb) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb
 
-                real = (r_ub - r_lb) * torch.rand(n_try, self.d, device=self.device).double() + r_lb
-                imag = (imag_ub - imag_lb) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb
+            # ---- exclusion mask ----
+            keep = torch.ones(n_try, dtype=torch.bool, device=self.device)
 
-                # exclusion mask
-                inside_excluded = (
+            for (ex_lb, ex_ub, ex_imag_lb, ex_imag_ub) in excluded_boxes:
+                inside = (
                     (real >= ex_lb) & (real <= ex_ub) &
                     (imag >= ex_imag_lb) & (imag <= ex_imag_ub)
                 ).all(dim=1)
+                keep &= ~inside
 
-                keep = ~inside_excluded
-                real_keep = real #real[keep]
-                imag_keep = imag #imag[keep]
+            real_keep = real[keep]
+            imag_keep = imag[keep]
 
-                take = min(real_keep.shape[0], remaining)
-                if take > 0:
-                    samples.append(
-                        torch.complex(real_keep[:take], imag_keep[:take])
-                    )
-                    remaining -= take
+            take = min(real_keep.shape[0], remaining)
+            if take > 0:
+                samples.append(torch.complex(real_keep[:take], imag_keep[:take]))
+                remaining -= take
 
-            if remaining > 0:
-                raise RuntimeError(
-                    "Failed to sample enough points outside excluded region. "
-                    "Increase max_tries or reduce excluded box."
-                )
+        if remaining > 0:
+            raise RuntimeError(
+                "Failed to sample enough points outside excluded regions. "
+                "Reduce excluded volume or increase max_tries."
+            )
 
         return torch.cat(samples, dim=0)
-
     
     ## Assume theta is a N x d matrix
     def gamma(self, theta):
@@ -848,7 +847,7 @@ class MGFTrainer:
     def train(
         self,
         lb=-1, ub=0, cutoff=0, imag_lb=-0.5, imag_ub=0.5,
-        ex_lb=-0.1, ex_ub=0.1, ex_imag_lb=-0.1, ex_imag_ub=0.1,
+        excluded_boxes = None,
         full_gradient=False, theta_eval=None,
         batch_size=500,
 
@@ -909,7 +908,7 @@ class MGFTrainer:
 
             for epoch in tqdm(range(epochs), desc="Joint training"):
                 theta = theta_eval.clone() if full_gradient else \
-                        self.sample_vector(lb=lb, ub=ub, cutoff=cutoff, imag_lb=imag_lb, imag_ub=imag_ub, ex_lb=ex_lb, ex_ub=ex_ub, ex_imag_lb=ex_imag_lb, ex_imag_ub=ex_imag_ub, batch_size=batch_size)
+                        self.sample_vector(lb=lb, ub=ub, imag_lb=imag_lb, imag_ub=imag_ub, excluded_boxes = excluded_boxes, batch_size=batch_size)
                 if anchor_set is not None and not full_gradient:
                     theta = torch.cat([theta, anchor_set], dim = 0)
 
@@ -977,7 +976,7 @@ class MGFTrainer:
 
                 for _ in tqdm(range(epochs), desc=f"Round {r}, component {k}"):
                     theta = theta_eval.clone() if full_gradient else \
-                            self.sample_vector(lb=lb, ub=ub, cutoff=cutoff, imag_lb=imag_lb, imag_ub=imag_ub, ex_lb=ex_lb, ex_ub=ex_ub, ex_imag_lb=ex_imag_lb, ex_imag_ub=ex_imag_ub, batch_size=batch_size)
+                            self.sample_vector(lb=lb, ub=ub, imag_lb=imag_lb, imag_ub=imag_ub, excluded_boxes = excluded_boxes, batch_size=batch_size)
                     
                     if anchor_set is not None and not full_gradient:
                         theta = torch.cat([theta, anchor_set], dim = 0)

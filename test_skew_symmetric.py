@@ -10,23 +10,20 @@ from torch.optim.lr_scheduler import ExponentialLR
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+from typing import Callable
+
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -10
-TRAIN_UB = 10
-TRAIN_CUTOFF = 0
-TRAIN_IMAG_LB = -5
-TRAIN_IMAG_UB = 5
-EX_LB = 0
-EX_UB = 2
-EX_IMAG_LB = -1
-EX_IMAG_UB = 1
-EVAL_LB = -10
-EVAL_UB = 2
-EVAL_IMAG_LB = -5
-EVAL_IMAG_UB = 5
+TRAIN_LB = -3
+TRAIN_UB = 3
+TRAIN_IMAG_LB = -3
+TRAIN_IMAG_UB = 3
+EVAL_LB = -3
+EVAL_UB = 3
+EVAL_IMAG_LB = -3
+EVAL_IMAG_UB = 3
 RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
@@ -71,7 +68,6 @@ def compute_alpha():
 def compute_true_phi(theta):
     alpha = compute_alpha()
     alpha = alpha.to(device = theta.device)
-    print("alpha:", alpha)
     n = theta.shape[0]
     alpha_ratios = alpha / (alpha - theta)
     phi_theta = torch.prod(alpha_ratios, dim = 1)
@@ -117,6 +113,43 @@ def tail_prob(t):
     val = mp.quad(lambda x1: mp.quad(lambda x2: density(x1,x2), [0, t-x1]), [0, t])
     return float(1.0 - val)
 
+#def improved_talbot_eq16(F: Callable[[mp.mpf], mp.mpf], t: mp.mpf, N: int) -> mp.mpf:
+#    """
+#    z(θ) = M/t(0.1446 + 3.0232θ^2 / (θ^2 - 3.0767π^2) + 0.2339iθ)
+#    z'(θ) = M/t (-(2*3.0232*(3.0767π^2)θ)/(θ^2-3.0767π^2)^2 + 0.2339i)
+#    f ≈ 1/(Mi) Σ_{θ=-π+(2k-1)π/M} exp(z(θ)t) F(z(θ)) z'(θ)
+#    """
+#    t = mp.mpf(t)
+#    if N <= 1:
+#        raise ValueError("N must be >= 2")
+#
+#    total = mp.mpf("0.0")
+#    for k in range(1, N+1):
+#        theta = -mp.pi + (2*k-1) * mp.pi/N
+#        z = N/t * (0.1446 + ((3.0232*theta**2)/(theta**2 - 3.0767*mp.pi**2)) + 0.2339j * theta)
+#        z_prime = N/t * (-(2*3.0232*(3.0767*mp.pi**2)*theta)/(theta**2 - 3.0767*mp.pi**2)**2 + 0.2339j)
+#        term = mp.e ** (z * t) * F(z) * z_prime
+#        total += term
+#    return (1 / (N * 1j)) * total
+
+def improved_talbot_eq16(F, t, N):
+    """
+    z(θ) = M/t(0.1446 + 3.0232θ^2 / (θ^2 - 3.0767π^2) + 0.2339iθ)
+    z'(θ) = M/t (-(2*3.0232*(3.0767π^2)θ)/(θ^2-3.0767π^2)^2 + 0.2339i)
+    f ≈ 1/(Mi) Σ_{θ=-π+(2k-1)π/M} exp(z(θ)t) F(z(θ)) z'(θ)
+    """
+    if N <= 1:
+        raise ValueError("N must be >= 2")
+
+    total = 0.0
+    for k in range(1, N+1):
+        theta = -math.pi + (2*k-1) * math.pi/N
+        z = N/t * (0.1446 + ((3.0232*theta**2)/(theta**2 - 3.0767*math.pi**2)) + 0.2339j * theta)
+        z_prime = N/t * (-(2*3.0232*(3.0767*math.pi**2)*theta)/(theta**2 - 3.0767*math.pi**2)**2 + 0.2339j)
+        term = math.e ** (z * t) * F(z) * z_prime
+        total += term
+    return (1 / (N * 1j)) * total
+
 def tail_prob_predicted(model, t):
     def tail_transform(s):
         global MIN_REAL, MAX_REAL, MIN_IMAG, MAX_IMAG
@@ -131,7 +164,7 @@ def tail_prob_predicted(model, t):
         return (1 - val) / s
 
     # Invert this new transform directly
-    return mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen"
+    return improved_talbot_eq16(tail_transform, t, N = 5) #mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen"
 
 def mgf(s1, s2):
     def integrand(x1, x2):
@@ -186,9 +219,15 @@ def laplace_2d_to_xsum(model, s_lst):
 
 ## Generate problem instance
 R, SIGMA, MU = generate_instance(d = d)
+alpha = compute_alpha()
+print("alpha:", alpha)
 print("R:", R)
 print("Sigma:", SIGMA)
 print("Mu:", MU)
+
+excluded_boxes = []
+for real_pole in set(alpha):
+    excluded_boxes.append((real_pole - 0.5, real_pole + 0.5, -1, 1))
 
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 
@@ -200,7 +239,7 @@ if False: #d == 2:
     X, Y = np.meshgrid(x, y)
     theta_eval = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).float()
 else:
-    theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, cutoff=(EVAL_LB+EVAL_UB)/2, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, ex_lb=EX_LB, ex_ub=EX_UB, ex_imag_lb=EX_IMAG_LB, ex_imag_ub=EX_IMAG_UB, batch_size = 10000)
+    theta_eval = mgf_trainer.sample_vector(lb=EVAL_LB, ub=EVAL_UB, imag_lb=EVAL_IMAG_LB, imag_ub=EVAL_IMAG_UB, excluded_boxes = excluded_boxes, batch_size = 10000)
 
 if RETRAIN:
     anchor_set = None
@@ -230,7 +269,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, cutoff = TRAIN_CUTOFF, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, ex_lb=EX_LB, ex_ub=EX_UB, ex_imag_lb=EX_IMAG_LB, ex_imag_ub=EX_IMAG_UB, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

@@ -705,7 +705,7 @@ class MGFTrainer:
         diff = (lhs - rhs)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def bar_loss_normalized_gamma(
+    def bar_loss_normalized(
         self,
         theta,
         log_phi_theta,    # (N,1) complex : log Phi(theta)

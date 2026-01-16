@@ -222,7 +222,7 @@ class FourierFeatures(nn.Module):
         half = num_features // 2
         self.d = d
 
-        freqs = torch.logspace(-4, 2, half, dtype=torch.float64)
+        freqs = torch.logspace(-4, 0.5, half, dtype=torch.float64)
         self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):

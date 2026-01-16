@@ -248,7 +248,7 @@ if RETRAIN:
         # Warm-up / coarse fit
         dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),
         # Refine BAR fit
-        #dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
+        dict(epochs=10000, lr=3e-4, T0=10000, eta_min=1e-4),
 #        dict(epochs=2000, lr=1e-4, T0=2000, eta_min=1e-5),
 #        # Final polishing
 #        dict(epochs=2000, lr=3e-5, T0=2000, eta_min=1e-6),
@@ -257,8 +257,8 @@ if RETRAIN:
         dict(epochs=800, lr=2e-4, T0=800, eta_min=2e-5),
         dict(epochs=800, lr=7e-5, T0=800, eta_min=7e-6),
     ]
-    lam_monotone = 1e3
-    lam_CR = 1e3
+    lam_monotone = 1e2
+    lam_CR = 1e2
     lam_growth = 0
     lam_zero_anchor = 1e-1
 #    joint_rounds = [

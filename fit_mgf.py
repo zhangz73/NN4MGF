@@ -222,7 +222,7 @@ class FourierFeatures(nn.Module):
         half = num_features // 2
         self.d = d
 
-        freqs = torch.logspace(-4, 0.5, half, dtype=torch.float64)
+        freqs = torch.logspace(-4, 1, half, dtype=torch.float64)
         self.register_buffer("freqs", freqs.view(1, 1, -1))
 
     def forward(self, x):
@@ -705,49 +705,73 @@ class MGFTrainer:
         diff = (lhs - rhs)
         return torch.mean(torch.abs(diff) ** 2)
     
-    def bar_loss_normalized(self, theta, log_phi_theta, log_phi_i_theta, eps=1e-12):
+    def bar_loss_normalized_gamma(
+        self,
+        theta,
+        log_phi_theta,    # (N,1) complex : log Phi(theta)
+        log_phi_i_theta,  # (N,d) complex : log Phi_i(theta)
+        eps=1e-12,
+    ):
         """
-        BAR loss in log-space:
+        Normalized BAR loss that also accounts for gamma magnitudes.
+
+        BAR equation:
             gamma(theta) * Phi(theta) = sum_i gamma_i(theta) * Phi_i(theta)
 
-        where Phi = exp(log_phi).
-        We exponentiate in a numerically stable way and measure a *relative*
-        residual so large magnitudes don't blow up the loss.
-        """
-        # gamma: complex coefficients from your model/problem
-        gamma_theta, gamma_i_theta = self.gamma(theta)   # gamma_theta: (N,), gamma_i_theta: (N,d)
+        We compute a per-sample shift `alpha` based on the magnitudes of the *terms*
+        gamma*Phi and gamma_i*Phi_i to prevent overflow/underflow and to stabilize
+        gradients across a large domain.
 
-        # --------- 1) Per-sample shift in log-space to avoid overflow ----------
-        # We only need to shift the REAL parts; imaginary parts are phases.
-        # Collect all real logs for this sample: log_phi_theta and all log_phi_i_theta
-        # shapes: (N,1) and (N,d)
-#        with torch.no_grad():
-        real_logs = torch.cat([log_phi_theta.real, log_phi_i_theta.real], dim=1)  # (N, 1+d)
+        Returns a scale-free relative residual:
+            |lhs - rhs| / (|lhs| + |rhs| + eps)
+        """
+
+        gamma_theta, gamma_i_theta = self.gamma(theta)  # (N,), (N,d), complex
+
+        # ----------------------------
+        # 1) Build per-sample alpha using gamma magnitudes too
+        # ----------------------------
+        # We need log|gamma|, but gamma can be 0 or very small, so clamp.
+        # Using abs().clamp_min(eps) keeps it differentiable almost everywhere.
+        log_abs_gamma_theta = torch.log(gamma_theta.abs().clamp_min(eps)).unsqueeze(1)  # (N,1)
+        log_abs_gamma_i = torch.log(gamma_i_theta.abs().clamp_min(eps))                # (N,d)
+
+        # Total "log-magnitude" of each term:
+        #   log|gamma*Phi| = log|gamma| + Re(log Phi)
+        # Note: only the real part of log_phi contributes to magnitude.
+        term_logs = torch.cat(
+            [log_abs_gamma_theta + log_phi_theta.real,    # (N,1)
+             log_abs_gamma_i + log_phi_i_theta.real],     # (N,d)
+            dim=1
+        )  # (N, 1+d)
 
         with torch.no_grad():
-            # For each sample n, alpha_n = max_j Re(log_phi_j(n))
-            alpha = real_logs.max(dim=1, keepdim=True)[0]  # (N,1)
+            alpha = term_logs.max(dim=1, keepdim=True)[0]  # (N,1)
 
-        # Shift logs by alpha: exp(log_phi - alpha) stays in a safe range
-        log_phi_theta_shifted = log_phi_theta - alpha      # (N,1) complex
-        log_phi_i_theta_shifted = log_phi_i_theta - alpha  # (N,d) complex
+        # ----------------------------
+        # 2) Compute scaled terms without overflow
+        # ----------------------------
+        # lhs_scaled = gamma * exp(log_phi - alpha)
+        lhs_scaled = gamma_theta.unsqueeze(1) * torch.exp(log_phi_theta - alpha)  # (N,1)
 
-        # --------- 2) Go back to value domain (but scaled) ----------
-        # Phi~ = exp(log_phi - alpha). True Phi = exp(alpha) * Phi~, but the common
-        # factor exp(alpha) cancels out in the BAR equation.
-        phi_theta_scaled = torch.exp(log_phi_theta_shifted)      # (N,1) complex
-        phi_i_theta_scaled = torch.exp(log_phi_i_theta_shifted)  # (N,d) complex
+        # rhs_scaled = sum_i gamma_i * exp(log_phi_i - alpha)
+        rhs_scaled = torch.sum(
+            gamma_i_theta * torch.exp(log_phi_i_theta - alpha),
+            dim=1,
+            keepdim=True
+        )  # (N,1)
 
-        # BAR in terms of scaled Phi:
-        lhs = gamma_theta.unsqueeze(1) * phi_theta_scaled          # (N,1)
-        rhs = torch.sum(gamma_i_theta * phi_i_theta_scaled, dim=1, keepdim=True)  # (N,1)
-        diff = torch.abs(rhs - lhs) * torch.exp(alpha)
+        # diff_scaled corresponds to (lhs - rhs) * exp(-alpha)
+        diff_scaled = rhs_scaled - lhs_scaled
 
-        # --------- 3) Relative residual to keep things scale-free ----------
-        scale = (lhs.abs() + rhs.abs() + eps)   # (N,1)
-        diff = diff / scale         # (N,1)
+        # ----------------------------
+        # 3) Relative residual (scale free)
+        # ----------------------------
+        scale = lhs_scaled.abs() + rhs_scaled.abs() + eps  # (N,1)
+        diff_scaled = diff_scaled.abs() / scale                    # (N,1)
 
-        return (diff ** 2).mean()
+        return (diff_scaled ** 2).mean()
+
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
         if full_gradient:

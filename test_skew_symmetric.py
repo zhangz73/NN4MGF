@@ -256,8 +256,8 @@ if RETRAIN:
         dict(epochs=800, lr=2e-4, T0=800, eta_min=2e-5),
         dict(epochs=800, lr=7e-5, T0=800, eta_min=7e-6),
     ]
-    lam_monotone = 1e1
-    lam_CR = 1e1
+    lam_monotone = 1e0
+    lam_CR = 1e0
     lam_growth = 0
     lam_zero_anchor = 1e-1
 #    joint_rounds = [

@@ -957,7 +957,7 @@ class MGFTrainer:
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse_norm + bar_mse * 1e-3 + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + bar_mse * 1e-1 + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()

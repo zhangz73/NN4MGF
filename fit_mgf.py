@@ -688,8 +688,8 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
-#        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
-#        diff = diff / scale_factor
+        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
+        diff = diff / scale_factor
         return torch.mean(torch.abs(diff) ** 2)
     
     def log_bar_loss(self, theta, log_phi_theta, log_phi_i_theta, train_idx = 0):
@@ -957,7 +957,7 @@ class MGFTrainer:
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse_norm + bar_mse * 1e-5 + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + bar_mse * 1e-3 + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()

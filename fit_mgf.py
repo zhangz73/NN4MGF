@@ -688,8 +688,8 @@ class MGFTrainer:
         lhs = gamma_theta * phi_theta
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
-        scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
-        diff = diff / scale_factor
+        #scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12
+        #diff = diff / scale_factor
         return torch.mean(torch.abs(diff) ** 2)
     
     def log_bar_loss(self, theta, log_phi_theta, log_phi_i_theta, train_idx = 0):
@@ -768,9 +768,9 @@ class MGFTrainer:
         # 3) Relative residual (scale free)
         # ----------------------------
         scale = lhs_scaled.abs() + rhs_scaled.abs() + eps  # (N,1)
-        diff_scaled = diff_scaled.abs() / scale                    # (N,1)
+        rel_diff_scaled = diff_scaled.abs() / scale                    # (N,1)
 
-        return (diff_scaled ** 2).mean()
+        return (diff_scaled.abs() ** 2).mean() * 1e-3 + (rel_diff_scaled ** 2).mean()
 
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
@@ -957,7 +957,7 @@ class MGFTrainer:
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 
-                loss = bar_mse_norm + bar_mse * 1e-1 + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
 
                 optimizer.zero_grad()
                 loss.backward()

@@ -770,7 +770,7 @@ class MGFTrainer:
         scale = lhs_scaled.abs() + rhs_scaled.abs() + eps  # (N,1)
         rel_diff_scaled = diff_scaled.abs() / scale                    # (N,1)
 
-        return (diff_scaled.abs() ** 2).mean() * 1e-2 + (rel_diff_scaled ** 2).mean()
+        return (diff_scaled.abs() ** 2).mean() * 1e-1 + (rel_diff_scaled ** 2).mean()
 
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):

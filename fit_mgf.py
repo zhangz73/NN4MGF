@@ -539,69 +539,121 @@ class MGFTrainer:
         self.engine = SobolEngine(dimension=d)
     
     # ---- Define monotonicity penalty ----
-    def monotonicity_penalty(self, model, s, lambda_imag=0.1):
+    def monotonicity_penalty(
+        self,
+        model,
+        s,
+        lambda_imag=0.1,
+        w_interior=1.0,
+        w_boundary=1.0,
+    ):
         """
-        Enforces that on the real axis:
-          1) Re(log M_int) is nondecreasing in each real coordinate
-          2) Im(log M_int) ≈ 0
-        where M_int is the interior MGF (output[:, 0]).
+        Enforces on the real axis:
+          - interior: Re(logM_int) monotone in each coordinate, Im(logM_int) ~ 0
+          - boundary i: Re(logM_bi) monotone in each active coordinate (d-1 of them), Im(logM_bi) ~ 0
         """
-        # Restrict to real axis
-        x = s.real.clone().detach().requires_grad_(True)   # (N, d)
-        z = torch.complex(x, torch.zeros_like(x))          # (N, d)
+        d = s.shape[1]
 
-        logM_all = model(z)            # (N, d+1) complex
-        logM_int = logM_all[:, 0:1]    # (N, 1) complex – interior only
+        # ---------- interior ----------
+        x = s.real.clone().detach().requires_grad_(True)   # (N,d)
+        z0 = torch.complex(x, torch.zeros_like(x))
+        logM_all = model(z0)                               # (N, d+1)
+        logM_int = logM_all[:, 0:1]                        # (N,1)
 
-        # ---- (1) Monotonicity of Re(log M_int) along each real coordinate ----
-        logM_real = logM_int.real      # (N, 1)
+        grad_int = torch.autograd.grad(logM_int.real.sum(), x, create_graph=True)[0]  # (N,d)
+        mono_int = torch.relu(-grad_int).mean()
+        imag_int = (logM_int.imag ** 2).mean()
 
-        # Gradient of sum over batch wrt x → shape (N, d)
-        d_logM_dx = torch.autograd.grad(
-            logM_real.sum(), x, create_graph=True
-        )[0]                           # (N, d)
+        # ---------- boundaries ----------
+        mono_b = 0.0
+        imag_b = 0.0
+        for i in range(d):
+            x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
+            z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
 
-        # For nondecreasing, we penalize negative slopes
-        mono_penalty = torch.relu(-d_logM_dx).mean()
+            logM_bi = model.boundary_networks[i](z_sub).view(-1, 1)  # (N,1) complex
 
-        # ---- (2) Reality on real axis: Im(log M_int) ≈ 0 ----
-        imag_penalty = (logM_int.imag ** 2).mean()
+            grad_bi = torch.autograd.grad(logM_bi.real.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
+            mono_b = mono_b + torch.relu(-grad_bi).mean()
+            imag_b = imag_b + (logM_bi.imag ** 2).mean()
 
-        return mono_penalty + lambda_imag * imag_penalty
+        mono_b = mono_b / max(d, 1)
+        imag_b = imag_b / max(d, 1)
 
+        return (
+            w_interior * mono_int
+            + w_boundary * mono_b
+            + lambda_imag * (w_interior * imag_int + w_boundary * imag_b)
+        )
 
     
-    def cauchy_riemann_penalty(self, model, z):
+    def cauchy_riemann_penalty(self, model, z, w_interior=1.0, w_boundary=1.0):
         """
-        Enforce CR for every output component of model(z).
-        z: complex (N, d)
-        model(z): complex (N, d+1)
+        model(z): (N, d+1) complex, but boundary nets are f_i: C^{d-1} -> C
+        z: (N, d) complex
         """
-        x = z.real.clone().detach().requires_grad_(True)
-        y = z.imag.clone().detach().requires_grad_(True)
+        # ---- interior ----
+        x = z.real.clone().detach().requires_grad_(True)  # (N,d)
+        y = z.imag.clone().detach().requires_grad_(True)  # (N,d)
         z_xy = torch.complex(x, y)
 
-        fz = model(z_xy)  # (N, d+1)
-        u_all = fz.real
-        v_all = fz.imag
+        out = model(z_xy)  # (N, d+1)
+        f_int = out[:, 0:1]  # (N,1)
+        u, v = f_int.real, f_int.imag
 
-        total_pen = 0.0
-        num_components = u_all.shape[1]
+        u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
+        u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+        v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
+        v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
 
-        for k in range(num_components):
-            u = u_all[:, k:k+1]  # (N,1)
-            v = v_all[:, k:k+1]  # (N,1)
+        cr_int = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
 
-            u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
-            u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
-            v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
-            v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+        # ---- boundaries: f_i depends on (d-1) coords ----
+        cr_b = 0.0
+        d = z.shape[1]
+        for i in range(d):
+            # build reduced complex input (N, d-1) as independent variables
+            x_sub = torch.cat([z.real[:, :i], z.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
+            y_sub = torch.cat([z.imag[:, :i], z.imag[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
+            z_sub = torch.complex(x_sub, y_sub)
 
-            cr_res = (u_x - v_y)**2 + (u_y + v_x)**2
-            total_pen = total_pen + cr_res.mean()
+            f = model.boundary_networks[i](z_sub)  # should output complex (N,1) or (N,)
+            f = f.view(-1, 1)
 
-        return total_pen / num_components
+            u, v = f.real, f.imag
 
+            u_x = torch.autograd.grad(u.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
+            u_y = torch.autograd.grad(u.sum(), y_sub, create_graph=True)[0]
+            v_x = torch.autograd.grad(v.sum(), x_sub, create_graph=True)[0]
+            v_y = torch.autograd.grad(v.sum(), y_sub, create_graph=True)[0]
+
+            cr_i = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
+            cr_b = cr_b + cr_i
+
+        cr_b = cr_b / max(d, 1)
+
+        return w_interior * cr_int + w_boundary * cr_b
+    
+    def boundary_consistency_penalty(self, model, theta):
+        """
+        Enforces interior restricted to theta_i=0 matches boundary network i.
+        theta: (N,d) complex
+        """
+        out_int = model.interior_network(theta)  # (N,1) complex (log)
+        d = theta.shape[1]
+        loss = 0.0
+
+        for i in range(d):
+            theta_clamp = theta.clone()
+            theta_clamp[:, i] = 0.0 + 0.0j
+            logM_int_on_boundary = model.interior_network(theta_clamp).view(-1, 1)
+
+            theta_sub = torch.cat([theta[:, :i], theta[:, i+1:]], dim=1)
+            logM_bi = model.boundary_networks[i](theta_sub).view(-1, 1)
+
+            loss = loss + torch.mean(torch.abs(logM_int_on_boundary - logM_bi) ** 2)
+
+        return loss / max(d, 1)
     
     def growth_penalty(self, model, s, C=1.0):
         M = model(s)
@@ -708,69 +760,48 @@ class MGFTrainer:
     def bar_loss_normalized(
         self,
         theta,
-        log_phi_theta,    # (N,1) complex : log Phi(theta)
-        log_phi_i_theta,  # (N,d) complex : log Phi_i(theta)
+        log_phi_theta,     # (N,1) complex
+        log_phi_i_theta,   # (N,d) complex
         eps=1e-12,
+        w_rel=1.0,         # keep a relative residual too (optional)
     ):
-        """
-        Normalized BAR loss that also accounts for gamma magnitudes.
+        gamma_theta, gamma_i_theta = self.gamma(theta)  # (N,), (N,d) complex
 
-        BAR equation:
-            gamma(theta) * Phi(theta) = sum_i gamma_i(theta) * Phi_i(theta)
-
-        We compute a per-sample shift `alpha` based on the magnitudes of the *terms*
-        gamma*Phi and gamma_i*Phi_i to prevent overflow/underflow and to stabilize
-        gradients across a large domain.
-
-        Returns a scale-free relative residual:
-            |lhs - rhs| / (|lhs| + |rhs| + eps)
-        """
-
-        gamma_theta, gamma_i_theta = self.gamma(theta)  # (N,), (N,d), complex
-
-        # ----------------------------
-        # 1) Build per-sample alpha using gamma magnitudes too
-        # ----------------------------
-        # We need log|gamma|, but gamma can be 0 or very small, so clamp.
-        # Using abs().clamp_min(eps) keeps it differentiable almost everywhere.
-        log_abs_gamma_theta = torch.log(gamma_theta.abs().clamp_min(eps)).unsqueeze(1)  # (N,1)
-        log_abs_gamma_i = torch.log(gamma_i_theta.abs().clamp_min(eps))                # (N,d)
-
-        # Total "log-magnitude" of each term:
-        #   log|gamma*Phi| = log|gamma| + Re(log Phi)
-        # Note: only the real part of log_phi contributes to magnitude.
-        term_logs = torch.cat(
-            [log_abs_gamma_theta + log_phi_theta.real,    # (N,1)
-             log_abs_gamma_i + log_phi_i_theta.real],     # (N,d)
-            dim=1
-        )  # (N, 1+d)
-
+        # log|gamma| part used only to form a safe alpha (no gradients needed)
         with torch.no_grad():
+            log_abs_gamma_theta = torch.log(gamma_theta.abs().clamp_min(eps)).unsqueeze(1)  # (N,1)
+            log_abs_gamma_i = torch.log(gamma_i_theta.abs().clamp_min(eps))                 # (N,d)
+            term_logs = torch.cat(
+                [log_abs_gamma_theta + log_phi_theta.real,
+                 log_abs_gamma_i + log_phi_i_theta.real],
+                dim=1,
+            )  # (N,1+d)
             alpha = term_logs.max(dim=1, keepdim=True)[0]  # (N,1)
 
-        # ----------------------------
-        # 2) Compute scaled terms without overflow
-        # ----------------------------
-        # lhs_scaled = gamma * exp(log_phi - alpha)
-        lhs_scaled = gamma_theta.unsqueeze(1) * torch.exp(log_phi_theta - alpha)  # (N,1)
-
-        # rhs_scaled = sum_i gamma_i * exp(log_phi_i - alpha)
-        rhs_scaled = torch.sum(
+        # scaled BAR terms (stable)
+        lhs = gamma_theta.unsqueeze(1) * torch.exp(log_phi_theta - alpha)  # (N,1) complex
+        rhs = torch.sum(
             gamma_i_theta * torch.exp(log_phi_i_theta - alpha),
             dim=1,
-            keepdim=True
-        )  # (N,1)
+            keepdim=True,
+        )  # (N,1) complex
 
-        # diff_scaled corresponds to (lhs - rhs) * exp(-alpha)
-        diff_scaled = rhs_scaled - lhs_scaled
+        # ---- log-ratio residual: log(lhs) - log(rhs) ----
+        # Avoid log(0) by adding eps in magnitude (complex-safe)
+        lhs_safe = lhs + eps
+        rhs_safe = rhs + eps
+        log_resid = torch.log(lhs_safe) - torch.log(rhs_safe)  # (N,1) complex
+        loss_log = log_resid.abs().mean()
+        loss = ((lhs_safe - rhs_safe).abs() ** 2).mean()
 
-        # ----------------------------
-        # 3) Relative residual (scale free)
-        # ----------------------------
-        scale = lhs_scaled.abs() + rhs_scaled.abs() + eps  # (N,1)
-        rel_diff_scaled = diff_scaled.abs() / scale                    # (N,1)
+        # ---- optional relative residual (helps early training) ----
+#        if w_rel > 0:
+#            rel = (lhs - rhs).abs() / (lhs.abs() + rhs.abs() + eps)
+#            loss_rel = (rel**2).mean()
+#            return loss_log + w_rel * loss_rel
 
-        return (diff_scaled.abs() ** 2).mean() * 1e-1 + (rel_diff_scaled ** 2).mean()
+        return loss_log
+
 
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
@@ -890,6 +921,7 @@ class MGFTrainer:
         lam_CR=1e-2,
         lam_growth=0.0,
         lam_zero_anchor=0.1,
+        lam_boundary_consistent=1e1,
         anchor_set=None,
     ):
         if full_gradient:
@@ -956,8 +988,9 @@ class MGFTrainer:
                 
                 mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                boundary_consistency_loss = self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
                 
-                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -1025,8 +1058,9 @@ class MGFTrainer:
                     
                     mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
                     growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                    boundary_consistency_loss = self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
                     
-                    loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss
+                    loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
 
                     optimizer.zero_grad()
                     loss.backward()

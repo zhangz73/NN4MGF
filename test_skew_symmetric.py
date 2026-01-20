@@ -269,7 +269,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 4096, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

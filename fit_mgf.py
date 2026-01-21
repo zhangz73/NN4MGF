@@ -1015,7 +1015,7 @@ class MGFTrainer:
                 growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                 boundary_consistency_loss = self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
                 
-                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
+                loss = bar_mse_norm + 1e-2 * bar_mse + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
 
                 optimizer.zero_grad()
                 loss.backward()

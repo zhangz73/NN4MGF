@@ -246,18 +246,18 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),
+        dict(epochs=1000, lr=3e-4, T0=10000, eta_min=1e-4),
         # Refine BAR fit
-#        dict(epochs=10000, lr=3e-4, T0=10000, eta_min=1e-4),
+        #dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
 #        # Final polishing
-#        dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
+        #dict(epochs=10000, lr=3e-5, T0=10000, eta_min=1e-5),
     ]
     individual_rounds = [
         dict(epochs=800, lr=2e-4, T0=800, eta_min=2e-5),
         dict(epochs=800, lr=7e-5, T0=800, eta_min=7e-6),
     ]
-    lam_monotone = 1e1
-    lam_CR = 1e1
+    lam_monotone = 1e-1
+    lam_CR = 1e-1
     lam_growth = 0
     lam_zero_anchor = 1e-1
 #    joint_rounds = [
@@ -269,7 +269,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 4096, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

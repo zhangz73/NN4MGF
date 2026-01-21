@@ -479,16 +479,22 @@ class MGFNet(nn.Module):
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
         self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
-        for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+#        for i in range(self.d):
+#            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
+        masks = []
+        for i in range(self.d):
+            mask_i = torch.ones((1, self.d), dtype=torch.cdouble)
+            mask_i[:,i] = 0
+            masks.append(mask_i)
+        self.register_buffer("masks", torch.stack(masks, dim=0))  # (d,1,d) complex
 
     def forward(self, x):
         phi = self.interior_network(x)
         phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = phi.device)
         for i in range(self.d):
-            input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
-            phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
+            mask_i = self.masks[i].to(device=x.device, dtype=x.dtype)
+            phi_i[:,i] = self.interior_network(x * mask_i).flatten()
         return torch.concat([phi, phi_i], dim = 1)
     
     def freeze_all(self):
@@ -542,97 +548,116 @@ class MGFTrainer:
     def monotonicity_penalty(
         self,
         model,
-        s,
+        s,                 # complex (N,d) (only s.real is used)
         lambda_imag=0.1,
         w_interior=1.0,
         w_boundary=1.0,
     ):
         """
-        Enforces on the real axis:
-          - interior: Re(logM_int) monotone in each coordinate, Im(logM_int) ~ 0
-          - boundary i: Re(logM_bi) monotone in each active coordinate (d-1 of them), Im(logM_bi) ~ 0
+        Apply monotonicity + reality-on-real-axis to BOTH:
+          - interior logMGF: out[:,0]
+          - boundary logMGFs: out[:,1+i] corresponds to zeroing coord i
         """
         d = s.shape[1]
 
-        # ---------- interior ----------
-        x = s.real.clone().detach().requires_grad_(True)   # (N,d)
-        z0 = torch.complex(x, torch.zeros_like(x))
-        logM_all = model(z0)                               # (N, d+1)
-        logM_int = logM_all[:, 0:1]                        # (N,1)
+        # Real-axis input
+        x = s.real.clone().detach().requires_grad_(True)            # (N,d)
+        z0 = torch.complex(x, torch.zeros_like(x))                  # (N,d)
 
-        grad_int = torch.autograd.grad(logM_int.real.sum(), x, create_graph=True)[0]  # (N,d)
-        mono_int = torch.relu(-grad_int).mean()
-        imag_int = (logM_int.imag ** 2).mean()
+        out = model(z0)                                             # (N,d+1) complex
+        if out.ndim == 1:
+            out = out.unsqueeze(1)
 
-        # ---------- boundaries ----------
-        mono_b = 0.0
-        imag_b = 0.0
+        total = 0.0
+        weight_sum = 0.0
+
+        # ---- interior (k=0) ----
+        logM = out[:, 0:1]                                          # (N,1)
+        grad = torch.autograd.grad(logM.real.sum(), x, create_graph=True)[0]  # (N,d)
+        mono = torch.relu(-grad).mean()                             # all coords active
+        imag = (logM.imag ** 2).mean()
+        total = total + w_interior * (mono + lambda_imag * imag)
+        weight_sum += w_interior
+
+        # ---- boundaries (k=1..d) ----
         for i in range(d):
-            x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
-            z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
+            # boundary component stored at column 1+i (your forward concatenates [phi, phi_i])
+            logM_b = out[:, 1 + i : 2 + i]                           # (N,1)
 
-            logM_bi = model.boundary_networks[i](z_sub).view(-1, 1)  # (N,1) complex
+            grad_b = torch.autograd.grad(logM_b.real.sum(), x, create_graph=True)[0]  # (N,d)
 
-            grad_bi = torch.autograd.grad(logM_bi.real.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
-            mono_b = mono_b + torch.relu(-grad_bi).mean()
-            imag_b = imag_b + (logM_bi.imag ** 2).mean()
+            # active coords exclude i (the coordinate that was zeroed inside the forward)
+            active = torch.ones(d, dtype=torch.bool, device=x.device)
+            active[i] = False
 
-        mono_b = mono_b / max(d, 1)
-        imag_b = imag_b / max(d, 1)
+            # Only penalize negative slopes on active coords
+            mono_b = torch.relu(-grad_b[:, active]).mean()
+            imag_b = (logM_b.imag ** 2).mean()
 
-        return (
-            w_interior * mono_int
-            + w_boundary * mono_b
-            + lambda_imag * (w_interior * imag_int + w_boundary * imag_b)
-        )
+            total = total + w_boundary * (mono_b + lambda_imag * imag_b)
+            weight_sum += w_boundary
 
+        return total / max(weight_sum, 1e-12)
     
-    def cauchy_riemann_penalty(self, model, z, w_interior=1.0, w_boundary=1.0):
+    def cauchy_riemann_penalty(
+        self,
+        model,
+        z,                 # complex (N,d)
+        w_interior=1.0,
+        w_boundary=1.0,
+    ):
         """
-        model(z): (N, d+1) complex, but boundary nets are f_i: C^{d-1} -> C
-        z: (N, d) complex
+        Apply CR penalty to BOTH:
+          - interior logMGF: out[:,0] must be holomorphic in all d coords
+          - boundary logMGFs: out[:,1+i] must be holomorphic in the active coords (exclude i)
         """
-        # ---- interior ----
-        x = z.real.clone().detach().requires_grad_(True)  # (N,d)
-        y = z.imag.clone().detach().requires_grad_(True)  # (N,d)
+        d = z.shape[1]
+
+        x = z.real.clone().detach().requires_grad_(True)            # (N,d)
+        y = z.imag.clone().detach().requires_grad_(True)            # (N,d)
         z_xy = torch.complex(x, y)
 
-        out = model(z_xy)  # (N, d+1)
-        f_int = out[:, 0:1]  # (N,1)
-        u, v = f_int.real, f_int.imag
+        out = model(z_xy)                                           # (N,d+1)
+        if out.ndim == 1:
+            out = out.unsqueeze(1)
 
-        u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
-        u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
-        v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
-        v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+        def cr_for_component(f, active_mask):
+            """
+            f: (N,1) complex
+            active_mask: bool (d,)
+            """
+            u, v = f.real, f.imag                                   # (N,1)
 
-        cr_int = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
+            u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]  # (N,d)
+            u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+            v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
+            v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
 
-        # ---- boundaries: f_i depends on (d-1) coords ----
-        cr_b = 0.0
-        d = z.shape[1]
+            # residual per coordinate
+            res = (u_x - v_y) ** 2 + (u_y + v_x) ** 2              # (N,d)
+
+            # only active coords
+            return res[:, active_mask].mean()
+
+        total = 0.0
+        weight_sum = 0.0
+
+        # ---- interior: all coords active ----
+        active_all = torch.ones(d, dtype=torch.bool, device=x.device)
+        f_int = out[:, 0:1]
+        total += w_interior * cr_for_component(f_int, active_all)
+        weight_sum += w_interior
+
+        # ---- boundaries: exclude the zeroed coord i ----
         for i in range(d):
-            # build reduced complex input (N, d-1) as independent variables
-            x_sub = torch.cat([z.real[:, :i], z.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
-            y_sub = torch.cat([z.imag[:, :i], z.imag[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
-            z_sub = torch.complex(x_sub, y_sub)
+            active = torch.ones(d, dtype=torch.bool, device=x.device)
+            active[i] = False
+            f_b = out[:, 1 + i : 2 + i]
+            total += w_boundary * cr_for_component(f_b, active)
+            weight_sum += w_boundary
 
-            f = model.boundary_networks[i](z_sub)  # should output complex (N,1) or (N,)
-            f = f.view(-1, 1)
+        return total / max(weight_sum, 1e-12)
 
-            u, v = f.real, f.imag
-
-            u_x = torch.autograd.grad(u.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
-            u_y = torch.autograd.grad(u.sum(), y_sub, create_graph=True)[0]
-            v_x = torch.autograd.grad(v.sum(), x_sub, create_graph=True)[0]
-            v_y = torch.autograd.grad(v.sum(), y_sub, create_graph=True)[0]
-
-            cr_i = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
-            cr_b = cr_b + cr_i
-
-        cr_b = cr_b / max(d, 1)
-
-        return w_interior * cr_int + w_boundary * cr_b
     
     def boundary_consistency_penalty(self, model, theta):
         """
@@ -921,7 +946,7 @@ class MGFTrainer:
         lam_CR=1e-2,
         lam_growth=0.0,
         lam_zero_anchor=0.1,
-        lam_boundary_consistent=1e1,
+        lam_boundary_consistent=0.0,
         anchor_set=None,
     ):
         if full_gradient:

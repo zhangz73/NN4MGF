@@ -920,7 +920,7 @@ class MGFTrainer:
         lam_CR=1e-2,
         lam_growth=0.0,
         lam_zero_anchor=0.1,
-        lam_boundary_consistent=1e1,
+        lam_boundary_consistent=0.0,
         anchor_set=None,
     ):
         if full_gradient:

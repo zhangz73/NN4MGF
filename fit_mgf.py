@@ -650,7 +650,7 @@ class MGFTrainer:
             log_phi_i_theta = output[:, 1:]
             phi_theta = torch.exp(log_phi_theta)
             phi_i_theta = torch.exp(log_phi_i_theta)
-            loss += self.bar_loss(theta_clamp, phi_theta, phi_i_theta)
+            loss += self.bar_loss_normalized(theta_clamp, phi_theta, phi_i_theta)
 
         return loss / max(d, 1)
     

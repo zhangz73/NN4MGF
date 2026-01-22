@@ -633,7 +633,7 @@ class MGFTrainer:
         cr_b = cr_b / max(d, 1)
 
         return w_interior * cr_int + w_boundary * cr_b
-    
+
     def boundary_consistency_penalty(self, model, theta):
         """
         Enforces interior restricted to theta_i=0 matches boundary network i in BAR.
@@ -644,13 +644,18 @@ class MGFTrainer:
 
         for i in range(d):
             theta_clamp = theta.clone()
-            theta_clamp[:, i] = 0.0 + 0.0j
+            ## TODO: Note that the theta_clamp is currently hard-coded
+            if i == 1:
+                theta_clamp[:, 1] = theta_clamp[:,0]
+            else:
+                theta_clamp[:, 1] = 0
+            gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
             output = model(theta_clamp)
             log_phi_theta = output[:, 0:1]
             log_phi_i_theta = output[:, 1:]
-            phi_theta = torch.exp(log_phi_theta)
-            phi_i_theta = torch.exp(log_phi_i_theta)
-            loss += self.bar_loss(theta_clamp, phi_theta, phi_i_theta)
+            lhs = torch.log(gamma_theta) + log_phi_theta
+            rhs = torch.log(gamma_i_theta[:,i]) + log_phi_i_theta[:,i]
+            loss += torch.mean(torch.abs(lhs - rhs) ** 2)
 
         return loss / max(d, 1)
     

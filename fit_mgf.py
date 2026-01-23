@@ -212,100 +212,161 @@ class MGFFeatures(nn.Module):
         # Flatten per dimension
         return feats.view(s.shape[0], -1)
 
-
 class FourierFeatures(nn.Module):
-    def __init__(self, d, num_features=32):
+    """
+    Fourier features for complex input z \in C^{d} (shape: (N,d)).
+
+    - Per-dim features: sin/cos on Re(z_k), Im(z_k)
+    - Optional pairwise features (on Re(z_i)+Re(z_j)) for cross-dim interactions
+      (implemented safely without broadcasting hacks)
+
+    Output: real features of shape (N, feat_dim)
+    """
+    def __init__(
+        self,
+        d: int,
+        num_features: int = 32,     # per-dim budget; must be even
+        fmin: float = 0.5,
+        fmax_x: float = 6.0,        # max freq for real part in normalized coords
+        fmax_y: float = 12.0,       # max freq for imag part in normalized coords (often higher)
+        use_pairwise: bool = True,
+        dtype: torch.dtype = torch.float64,
+    ):
         super().__init__()
         if num_features % 2 != 0:
             raise ValueError("num_features must be even")
-
-        half = num_features // 2
         self.d = d
+        self.num_features = num_features
+        self.half = num_features // 2
+        self.use_pairwise = use_pairwise
 
-        freqs = torch.logspace(-4, 1, half, dtype=torch.float64)
-        self.register_buffer("freqs", freqs.view(1, 1, -1))
+        # frequencies are defined on normalized coords in [-1,1]
+        freqs_x = torch.logspace(math.log10(fmin), math.log10(fmax_x), self.half, dtype=dtype)
+        freqs_y = torch.logspace(math.log10(fmin), math.log10(fmax_y), self.half, dtype=dtype)
+        self.register_buffer("freqs_x", freqs_x)  # (half,)
+        self.register_buffer("freqs_y", freqs_y)  # (half,)
 
-    def forward(self, x):
-        x_real = x.real.unsqueeze(-1)  # (N, d, 1)
-        x_imag = x.imag.unsqueeze(-1)  # (N, d, 1)
+        # number of pairwise (i<j)
+        self.num_pairs = (d * (d - 1)) // 2 if use_pairwise else 0
 
-        xb = 2 * math.pi * x_real * self.freqs   # (N, d, F)
-        yb = 2 * math.pi * x_imag * self.freqs   # (N, d, F)
-        
-        feats = [
-            torch.sin(xb), torch.cos(xb),
-            torch.sin(yb), torch.cos(yb),
-        ]
+    def feat_dim(self) -> int:
+        # per dim: sin/cos for x + sin/cos for y => 4*half = 2*num_features
+        per_dim = self.d * (4 * self.half)
 
-        # ---- pairwise cross-dim interaction features ----
+        # per pair: sin/cos of (x_i + x_j) => 2*half = num_features
+        per_pair = self.num_pairs * (2 * self.half)
+
+        return per_dim + per_pair
+
+    def forward(self, z_norm: torch.Tensor) -> torch.Tensor:
+        """
+        z_norm: complex tensor (N,d), assumed already normalized to [-1,1] box.
+        returns: real tensor (N, feat_dim)
+        """
+        N, d = z_norm.shape
+        assert d == self.d
+
+        x = z_norm.real  # (N,d)
+        y = z_norm.imag  # (N,d)
+
+        # ---- per-dim features ----
+        # shapes: (N,d,half)
+        xb = 2.0 * math.pi * x.unsqueeze(-1) * self.freqs_x.view(1, 1, -1)
+        yb = 2.0 * math.pi * y.unsqueeze(-1) * self.freqs_y.view(1, 1, -1)
+
+        per_dim_feats = torch.cat(
+            [torch.sin(xb), torch.cos(xb), torch.sin(yb), torch.cos(yb)],
+            dim=-1,  # (N,d,4*half)
+        ).reshape(N, -1)  # (N, d*(4*half))
+
+        if not self.use_pairwise or self.d <= 1:
+            return per_dim_feats
+
+        # ---- pairwise interaction features (real-real sums) ----
+        pair_feats = []
+        # each pair term gives (N, 2*half), and we concat over pairs -> (N, num_pairs*(2*half))
         for i in range(self.d):
             for j in range(i + 1, self.d):
-                # shape (N, 1, 1) → broadcast to (N, d, 1)
-                xr = x_real[:, i:i+1]
-                yr = x_real[:, j:j+1]
+                pair = (x[:, i] + x[:, j]).unsqueeze(-1)  # (N,1)
+                pb = 2.0 * math.pi * pair * self.freqs_x.view(1, -1)  # (N,half) use freqs_x
+                pair_feats.append(torch.sin(pb))
+                pair_feats.append(torch.cos(pb))
 
-                pair = xr + yr                       # (N, 1, 1)
-#                    print(self.d, i, j, xr.shape, yr.shape, pair.shape)
-                pair = pair.expand(-1, self.d, -1)   # (N, d, 1)
+        pair_feats = torch.cat(pair_feats, dim=-1)  # (N, num_pairs*(2*half))
 
-                pb = 2 * math.pi * pair * self.freqs # (N, d, F)
+        return torch.cat([per_dim_feats, pair_feats], dim=-1)
 
-                feats += [
-                    torch.sin(pb),
-                    torch.cos(pb),
-                ]
-
-        feats = torch.cat(feats, dim=-1)  # all shapes now match: (N, d, ·)
-        return feats.view(x.shape[0], -1) ## num_features x d x 2 ## num_features x d x (d+1)
 
 class LogGMFNet(nn.Module):
-    def __init__(self, d, ff_m = 32, hidden_dim = 128, scale_by_zero = False, x_min = -1, x_max = 0, y_min = -1, y_max = 1):
+    def __init__(
+        self, d, ff_m=64, hidden_dim=128, scale_by_zero=True,
+        x_min=-5.0, x_max=0.0, y_min=-16.0, y_max=16.0,
+        fmin=1e-2, fmax_x=1.5, fmax_y=2.0,
+    ):
         super().__init__()
         self.d = d
-        self.ff = FourierFeatures(d = self.d, num_features = ff_m)
-#        exp_scales = (0.5, 1.0)
-#        poly_degree = 3
-#        self.ff = MGFFeatures(
-#            d=self.d,
-#            num_imag_freqs=ff_m,
-#            exp_scales=exp_scales,
-#            poly_degree=poly_degree,
-#        )
-        ## Input dim for MGFFeatures: (poly_degree + len(exp_scales) + 2 * ff_m) * self.d
-        ## Input dim for Fourier features: self.d * ff_m * 2
-        self.net = nn.Sequential(
-            nn.Linear(self.d * (self.d + 1) * ff_m, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 2)  # (Re log g, Im log g)
-        )
+        self.scale_by_zero = scale_by_zero
         self.X_MIN, self.X_MAX = x_min, x_max
         self.Y_MIN, self.Y_MAX = y_min, y_max
-        self.scale_by_zero = scale_by_zero
 
-    def forward(self, x):
-        x_coord = x.real
-        y_coord = x.imag
+        # 1D feature extractor used per coordinate
+        self.ff1 = FourierFeatures(d=1, num_features=ff_m, fmin=fmin, fmax_x=fmax_x, fmax_y=fmax_y, use_pairwise=False)
+        in_dim = self.ff1.feat_dim()
 
-        # x_coord = 2.0 * (x_coord - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
-        # y_coord = 2.0 * (y_coord - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
-        x_norm = torch.complex(x_coord, y_coord) #torch.cat([x_coord, y_coord], dim=1)
-        
-        raw = self.net(self.ff(x_norm))
-        raw = torch.complex(raw[:,0:1], raw[:,1:2])
+        def make_branch():
+            return nn.Sequential(
+                nn.Linear(in_dim, hidden_dim),
+                nn.SiLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.SiLU(),
+                nn.Linear(hidden_dim, 2),  # complex log contribution
+            )
+
+        self.branch = nn.ModuleList([make_branch() for _ in range(d)])
+        self.bias = nn.Parameter(torch.zeros(1, 2, dtype=torch.float64))  # constant log term (Re,Im)
+
+    def _normalize(self, z):
+        xr = 2.0 * (z.real - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+        yi = 2.0 * (z.imag - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+        return torch.complex(xr, yi)
+
+    def forward(self, z):  # z: (N,d) complex
+        z = self._normalize(z)
+
+        contrib = 0.0
+        for k in range(self.d):
+            zk = z[:, k:k+1]                # (N,1)
+            feats = self.ff1(zk)            # (N,feat_dim)
+            out = self.branch[k](feats)     # (N,2)
+            out = torch.complex(out[:,0:1], out[:,1:2])
+            contrib = contrib + out
+
+        bias = torch.complex(self.bias[:,0:1], self.bias[:,1:2])  # (1,1)
+        raw = contrib + bias
+
         if self.scale_by_zero:
-            x_zero = torch.zeros_like(x_coord, dtype=torch.double)
-            y_zero = torch.zeros_like(y_coord, dtype=torch.double)
-            # x_zero = 2.0 * (x_zero - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
-            # y_zero = 2.0 * (y_zero - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
-            zero_point = torch.complex(x_zero, y_zero) #torch.cat([x_zero, y_zero], dim=1) #torch.zeros(1, 2, dtype = torch.double, device = x.device)
-            raw0 = self.net(self.ff(zero_point))
-            raw0 = torch.complex(raw0[:,0:1], raw0[:,1:2])
-            output = raw - raw0
-        else:
-            output = raw
-        return output
+            z0 = torch.zeros_like(z)  # normalized origin corresponds to raw origin after normalization
+            # Note: easiest is evaluate forward at *raw* origin, but here z is already normalized.
+            # So do a small helper: evaluate with raw input zeros:
+            raw0 = self._forward_raw_origin(z.device, z.dtype, z.shape[0])
+            raw = raw - raw0
+
+        return raw
+
+    def _forward_raw_origin(self, device, dtype, N):
+        # raw origin in original coordinates is theta=0
+        theta0 = torch.zeros((N, self.d), device=device, dtype=torch.cdouble)
+        theta0 = self._normalize(theta0)
+        contrib = 0.0
+        for k in range(self.d):
+            zk = theta0[:, k:k+1]
+            feats = self.ff1(zk)
+            out = self.branch[k](feats)
+            out = torch.complex(out[:,0:1], out[:,1:2])
+            contrib = contrib + out
+        bias = torch.complex(self.bias[:,0:1], self.bias[:,1:2])
+        return contrib + bias
+
 
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
@@ -651,12 +712,30 @@ class MGFTrainer:
                 theta_clamp[:, 1] = 0
             gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
             output = model(theta_clamp)
-            log_phi_theta = output[:, 0:1]
+            log_phi_theta = output[:, 0]
             log_phi_i_theta = output[:, 1:]
             lhs = torch.log(gamma_theta) + log_phi_theta
             rhs = torch.log(gamma_i_theta[:,i]) + log_phi_i_theta[:,i]
             loss += torch.mean(torch.abs(lhs - rhs) ** 2)
+        return loss / max(d, 1)
+    
+    def boundary_consistency_penalty_old(self, model, theta):
+        """
+        Enforces interior restricted to theta_i=0 matches boundary network i in BAR.
+        theta: (N,d) complex
+        """
+        d = theta.shape[1]
+        loss = 0.0
 
+        for i in range(d):
+            theta_clamp = theta.clone()
+            ## TODO: Note that the theta_clamp is currently hard-coded
+            theta_clamp[:,i] = 0
+            gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
+            output = model(theta_clamp)
+            log_phi_theta = output[:, 0]
+            log_phi_i_theta = output[:, 1:]
+            loss += torch.mean(torch.abs(log_phi_theta - log_phi_i_theta[:,i]) ** 2)
         return loss / max(d, 1)
     
     def growth_penalty(self, model, s, C=1.0):
@@ -795,8 +874,7 @@ class MGFTrainer:
         lhs_safe = lhs + eps
         rhs_safe = rhs + eps
         log_resid = torch.log(lhs_safe) - torch.log(rhs_safe)  # (N,1) complex
-        loss_log = log_resid.abs().mean()
-        loss = ((lhs_safe - rhs_safe).abs() ** 2).mean()
+        loss = log_resid.abs().mean()
 
         # ---- optional relative residual (helps early training) ----
 #        if w_rel > 0:
@@ -804,7 +882,7 @@ class MGFTrainer:
 #            loss_rel = (rel**2).mean()
 #            return loss_log + w_rel * loss_rel
 
-        return loss_log
+        return loss
 
 
     
@@ -925,7 +1003,7 @@ class MGFTrainer:
         lam_CR=1e-2,
         lam_growth=0.0,
         lam_zero_anchor=0.1,
-        lam_boundary_consistent=1e1,
+        lam_boundary_consistent=0.0,
         anchor_set=None,
     ):
         if full_gradient:

@@ -296,12 +296,31 @@ class FourierFeatures(nn.Module):
 
         return torch.cat([per_dim_feats, pair_feats], dim=-1)
 
-
 class LogGMFNet(nn.Module):
+    """
+    Single shared network:
+      z (N,d) complex
+        -> normalize to z_norm in [-1,1]^d + i[-1,1]^d
+        -> FourierFeatures(d, ...) : R^{feat_dim}
+        -> MLP : R^2
+        -> complex log-MGF (N,1)
+      Optional anchoring: subtract value at theta=0 so that log phi(0)=0.
+    """
     def __init__(
-        self, d, ff_m=64, hidden_dim=128, scale_by_zero=True,
-        x_min=-5.0, x_max=0.0, y_min=-16.0, y_max=16.0,
-        fmin=1e-2, fmax_x=1.5, fmax_y=2.0,
+        self,
+        d: int,
+        ff_m: int = 64,
+        hidden_dim: int = 128,
+        scale_by_zero: bool = True,
+        x_min: float = -5.0,
+        x_max: float = 0.0,
+        y_min: float = -16.0,
+        y_max: float = 16.0,
+        fmin: float = 1e-2,
+        fmax_x: float = 1.5,
+        fmax_y: float = 2.0,
+        use_pairwise: bool = True,
+        dtype: torch.dtype = torch.float64,
     ):
         super().__init__()
         self.d = d
@@ -309,64 +328,63 @@ class LogGMFNet(nn.Module):
         self.X_MIN, self.X_MAX = x_min, x_max
         self.Y_MIN, self.Y_MAX = y_min, y_max
 
-        # 1D feature extractor used per coordinate
-        self.ff1 = FourierFeatures(d=1, num_features=ff_m, fmin=fmin, fmax_x=fmax_x, fmax_y=fmax_y, use_pairwise=False)
-        in_dim = self.ff1.feat_dim()
+        # Joint Fourier features on all dims
+        self.ff = FourierFeatures(
+            d=d,
+            num_features=ff_m,
+            fmin=fmin,
+            fmax_x=fmax_x,
+            fmax_y=fmax_y,
+            use_pairwise=use_pairwise,
+            dtype=dtype,
+        )
+        in_dim = self.ff.feat_dim()
 
-        def make_branch():
-            return nn.Sequential(
-                nn.Linear(in_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, 2),  # complex log contribution
-            )
+        # Single shared MLP after Fourier features
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 2),  # (Re log phi, Im log phi)
+        )
 
-        self.branch = nn.ModuleList([make_branch() for _ in range(d)])
-        self.bias = nn.Parameter(torch.zeros(1, 2, dtype=torch.float64))  # constant log term (Re,Im)
+        # Optional constant log term; you can remove this if you always anchor.
+        self.bias = nn.Parameter(torch.zeros(1, 2, dtype=dtype))
 
-    def _normalize(self, z):
+    def _normalize(self, z: torch.Tensor) -> torch.Tensor:
         xr = 2.0 * (z.real - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
         yi = 2.0 * (z.imag - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
         return torch.complex(xr, yi)
 
-    def forward(self, z):  # z: (N,d) complex
-        z = self._normalize(z)
+    def _raw_forward_normed(self, z_norm: torch.Tensor) -> torch.Tensor:
+        """
+        z_norm: (N,d) complex, already normalized.
+        returns: (N,1) complex
+        """
+        feats = self.ff(z_norm)                 # (N, feat_dim) real
+        out = self.net(feats)                   # (N, 2) real
+        out = torch.complex(out[:, 0:1], out[:, 1:2])  # (N,1) complex
+        bias = torch.complex(self.bias[:, 0:1], self.bias[:, 1:2])  # (1,1)
+        return out + bias
 
-        contrib = 0.0
-        for k in range(self.d):
-            zk = z[:, k:k+1]                # (N,1)
-            feats = self.ff1(zk)            # (N,feat_dim)
-            out = self.branch[k](feats)     # (N,2)
-            out = torch.complex(out[:,0:1], out[:,1:2])
-            contrib = contrib + out
-
-        bias = torch.complex(self.bias[:,0:1], self.bias[:,1:2])  # (1,1)
-        raw = contrib + bias
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        z: (N,d) complex in original coordinates
+        returns: (N,1) complex, approximating log MGF
+        """
+        z_norm = self._normalize(z)
+        raw = self._raw_forward_normed(z_norm)
 
         if self.scale_by_zero:
-            z0 = torch.zeros_like(z)  # normalized origin corresponds to raw origin after normalization
-            # Note: easiest is evaluate forward at *raw* origin, but here z is already normalized.
-            # So do a small helper: evaluate with raw input zeros:
-            raw0 = self._forward_raw_origin(z.device, z.dtype, z.shape[0])
+            # evaluate at theta=0 (in original coords), then subtract
+            # Note: normalization(0) is generally NOT 0 unless the box is centered at 0.
+            theta0 = torch.zeros_like(z)  # (N,d) complex zeros in original coords
+            z0_norm = self._normalize(theta0)
+            raw0 = self._raw_forward_normed(z0_norm)
             raw = raw - raw0
 
         return raw
-
-    def _forward_raw_origin(self, device, dtype, N):
-        # raw origin in original coordinates is theta=0
-        theta0 = torch.zeros((N, self.d), device=device, dtype=torch.cdouble)
-        theta0 = self._normalize(theta0)
-        contrib = 0.0
-        for k in range(self.d):
-            zk = theta0[:, k:k+1]
-            feats = self.ff1(zk)
-            out = self.branch[k](feats)
-            out = torch.complex(out[:,0:1], out[:,1:2])
-            contrib = contrib + out
-        bias = torch.complex(self.bias[:,0:1], self.bias[:,1:2])
-        return contrib + bias
-
 
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):

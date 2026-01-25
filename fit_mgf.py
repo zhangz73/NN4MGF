@@ -873,8 +873,10 @@ class MGFTrainer:
         # Avoid log(0) by adding eps in magnitude (complex-safe)
         lhs_safe = lhs + eps
         rhs_safe = rhs + eps
-        log_resid = torch.log(lhs_safe) - torch.log(rhs_safe)  # (N,1) complex
-        loss = log_resid.abs().mean()
+#        log_resid = torch.log(lhs_safe) - torch.log(rhs_safe)  # (N,1) complex
+#        loss = log_resid.abs().mean()
+        resid = (lhs - rhs).abs() / (lhs.abs() + rhs.abs() + eps)
+        loss = (resid ** 2).mean()
 
         # ---- optional relative residual (helps early training) ----
 #        if w_rel > 0:

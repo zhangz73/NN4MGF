@@ -1056,7 +1056,7 @@ class MGFTrainer:
             lr = cfg["lr"]
             T0 = cfg.get("T0", epochs)
             eta_min = cfg.get("eta_min", 0.0)
-            optimizer = optim.Adam(self.model.parameters(), lr=lr)
+            optimizer = optim.AdamW(self.model.parameters(), lr=lr)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 optimizer,
                 T_0=T0,
@@ -1122,7 +1122,7 @@ class MGFTrainer:
                 else:
                     self.model.unfreeze_boundary_i(k - 1)
 
-                optimizer = optim.Adam(
+                optimizer = optim.AdamW(
                     filter(lambda p: p.requires_grad, self.model.parameters()),
                     lr=lr,
                 )

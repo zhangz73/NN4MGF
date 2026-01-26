@@ -150,6 +150,46 @@ def improved_talbot_eq16(F, t, N):
         total += term
     return (1 / (N * 1j)) * total
 
+def talbot_1(F, t, N):
+    if N <= 1:
+        raise ValueError("N must be >= 2")
+    
+    s = 0.7556
+    m = 0.8597
+    n = 0.3029
+
+    total = 0.0
+    for k in range(-N, N):
+        theta = (2*k+1) * math.pi/(2*N)
+        z = N/t * (-s + m * (1 + (2 * theta ** 2) / (theta ** 2 - math.pi ** 2) + n * 1j * theta))
+        z_prime = N/t * m * (-(4 * math.pi ** 2 * theta) / (theta ** 2 - math.pi ** 2) ** 2 + n * 1j)
+        term = math.e ** (z * t) * F(z) * z_prime
+        total += term
+    return (1 / (N * 2j)) * total
+
+def talbot_2(F, t, N):
+    if N <= 1:
+        raise ValueError("N must be >= 2")
+    
+    s = 0.4814
+    m = 0.6443
+    n = 0.5653
+    
+    def cot(x):
+        return math.cos(x) / math.sin(x)
+    
+    def csc(x):
+        return 1 / math.sin(x)
+
+    total = 0.0 + 0.0j
+    for k in range(-N, N):
+        theta = (2*k+1) * np.pi/(2*N)
+        z = N/t * (-s + m * (theta * cot(theta) + n * 1j * theta))
+        z_prime = N/t * m * (cot(theta) - theta * csc(theta) ** 2 + n * 1j)
+        term = math.e ** (z * t) * F(z) * z_prime
+        total += term
+    return (1 / (N * 2j)) * total
+
 def tail_prob_predicted(model, t):
     def tail_transform(s):
         global MIN_REAL, MAX_REAL, MIN_IMAG, MAX_IMAG
@@ -165,7 +205,7 @@ def tail_prob_predicted(model, t):
 
     # Invert this new transform directly
     # improved_talbot_eq16(tail_transform, t, N = 5)
-    return mp.invertlaplace(tail_transform, t, method="dehoog", degree = 5) #"stehfest" #"cohen"
+    return mp.invertlaplace(tail_transform, t, method="dehoog", degree = 5) #"stehfest" #"cohen" #talbot_2(tail_transform, t, N = 15) #
 
 def mgf(s1, s2):
     def integrand(x1, x2):
@@ -185,14 +225,14 @@ def laplace_xsum(s):
     MAX_REAL = max(MAX_REAL, float(s.real))
     MIN_IMAG = min(MIN_IMAG, float(s.imag))
     MAX_IMAG = max(MAX_IMAG, float(s.imag))
-    if float(s) == 0:
+    if s == 0:
         return 1.0
     def integrand(x1, x2):
         return density(x1, x2) * mp.exp(-s * (x1 + x2))
 
     # do the double integral over [0, inf) x [0, inf)
     val = mp.quad(lambda x1: mp.quad(lambda x2: integrand(x1,x2), [0, mp.inf]), [0, mp.inf])
-    return float(val / s)
+    return val
 
 ## Assume s is a 1-d pytorch tensor
 def laplace_2d_to_xsum(model, s_lst):
@@ -210,12 +250,13 @@ def laplace_2d_to_xsum(model, s_lst):
     with torch.no_grad():
         output = model.eval(-input)
         joint_laplace = output[:,0]
-    ans = torch.empty_like(joint_laplace)
-    # Case 1: s != 0
-    mask = s_lst != 0
-    ans[mask] = joint_laplace[mask] / s_lst[mask]
-    # Case 2: s = 0 → Laplace transform must equal 1
-    ans[~mask] = 1.0
+#    ans = torch.empty_like(joint_laplace)
+#    # Case 1: s != 0
+#    mask = s_lst != 0
+#    ans[mask] = joint_laplace[mask] / s_lst[mask]
+#    # Case 2: s = 0 → Laplace transform must equal 1
+#    ans[~mask] = 1.0
+    ans = joint_laplace
     return ans
 
 ## Generate problem instance
@@ -260,6 +301,7 @@ if RETRAIN:
     lam_CR = 1e1
     lam_growth = 0
     lam_zero_anchor = 1e-1
+    lam_boundary_consistent = 1e1
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
@@ -269,7 +311,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

@@ -287,12 +287,12 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=10000, lr=1e-3, T0=10000, eta_min=3e-4),
+        dict(epochs=20000, lr=1e-3, T0=20000, eta_min=3e-4),
         # Refine BAR fit
-        dict(epochs=10000, lr=1e-4, T0=10000, eta_min=3e-5),
+        dict(epochs=20000, lr=1e-4, T0=20000, eta_min=3e-5),
 #        # Final polishing
-        dict(epochs=10000, lr=3e-5, T0=10000, eta_min=1e-5),
-        dict(epochs=10000, lr=1e-5, T0=10000, eta_min=3e-6),
+        dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
+        dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
     ]
     individual_rounds = [
         dict(epochs=800, lr=2e-4, T0=800, eta_min=2e-5),

@@ -838,7 +838,7 @@ class MGFTrainer:
     ## Phi_i_theta: N x d
     def bar_loss(self, theta, phi_theta, phi_i_theta):
         gamma_theta, gamma_i_theta = self.gamma(theta)
-        lhs = gamma_theta * phi_theta
+        lhs = gamma_theta * phi_theta.flatten()
         rhs = torch.sum(gamma_i_theta * phi_i_theta, dim = 1)
         diff = (lhs - rhs)
         #scale_factor = torch.maximum(torch.abs(lhs), torch.abs(rhs)) + 1e-12

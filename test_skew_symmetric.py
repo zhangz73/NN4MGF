@@ -17,11 +17,11 @@ from inverse_laplace import InverseLaplace
 
 d = 2
 TRAIN_LB = -5
-TRAIN_UB = 0
+TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -16
 TRAIN_IMAG_UB = 16
 EVAL_LB = -5
-EVAL_UB = 0
+EVAL_UB = 0.5
 EVAL_IMAG_LB = -16
 EVAL_IMAG_UB = 16
 RETRAIN = True
@@ -154,6 +154,7 @@ def talbot_1(F, t, N):
     if N <= 1:
         raise ValueError("N must be >= 2")
     
+    alpha = 1
     s = 0.7556
     m = 0.8597
     n = 0.3029
@@ -161,8 +162,8 @@ def talbot_1(F, t, N):
     total = 0.0
     for k in range(-N, N):
         theta = (2*k+1) * math.pi/(2*N)
-        z = N/t * (-s + m * (1 + (2 * theta ** 2) / (theta ** 2 - math.pi ** 2) + n * 1j * theta))
-        z_prime = N/t * m * (-(4 * math.pi ** 2 * theta) / (theta ** 2 - math.pi ** 2) ** 2 + n * 1j)
+        z = N/t * (-s + m * (1 + (2 * theta ** 2) / (theta ** 2 - alpha * math.pi ** 2) + n * 1j * theta))
+        z_prime = N/t * m * (-(4 * alpha * math.pi ** 2 * theta) / (theta ** 2 - alpha * math.pi ** 2) ** 2 + n * 1j)
         term = math.e ** (z * t) * F(z) * z_prime
         total += term
     return (1 / (N * 2j)) * total
@@ -171,6 +172,7 @@ def talbot_2(F, t, N):
     if N <= 1:
         raise ValueError("N must be >= 2")
     
+    alpha = 0.7
     s = 0.4814
     m = 0.6443
     n = 0.5653
@@ -184,8 +186,8 @@ def talbot_2(F, t, N):
     total = 0.0 + 0.0j
     for k in range(-N, N):
         theta = (2*k+1) * np.pi/(2*N)
-        z = N/t * (-s + m * (theta * cot(theta) + n * 1j * theta))
-        z_prime = N/t * m * (cot(theta) - theta * csc(theta) ** 2 + n * 1j)
+        z = N/t * (-s + m * (theta * cot(alpha * theta) + n * 1j * theta))
+        z_prime = N/t * m * (cot(alpha * theta) - alpha * theta * csc(alpha * theta) ** 2 + n * 1j)
         term = math.e ** (z * t) * F(z) * z_prime
         total += term
     return (1 / (N * 2j)) * total
@@ -205,7 +207,7 @@ def tail_prob_predicted(model, t):
 
     # Invert this new transform directly
     # improved_talbot_eq16(tail_transform, t, N = 5)
-    return mp.invertlaplace(tail_transform, t, method="dehoog", degree = 5) #"stehfest" #"cohen" #talbot_2(tail_transform, t, N = 15) #
+    return mp.invertlaplace(tail_transform, t, method="talbot", degree = 5) #"stehfest" #"cohen" #talbot_2(tail_transform, t, N = 5) #
 
 def mgf(s1, s2):
     def integrand(x1, x2):
@@ -259,6 +261,36 @@ def laplace_2d_to_xsum(model, s_lst):
     ans = joint_laplace
     return ans
 
+def print_table(t_lst, true_lst, predicted_lst):
+    assert len(t_lst) == len(true_lst) == len(predicted_lst)
+    true_lst = [float(x) for x in true_lst]
+    predicted_lst = [float(x) for x in predicted_lst]
+
+    header = (
+        f"{'t':>12} | "
+        f"{'true value':>14} | "
+        f"{'pred value':>14} | "
+        f"{'abs error':>14} | "
+        f"{'rel error':>14}"
+    )
+    sep = "-" * len(header)
+
+    print(header)
+    print(sep)
+
+    for t, true_val, pred_val in zip(t_lst, true_lst, predicted_lst):
+        abs_err = abs(pred_val - true_val)
+        rel_err = abs_err / true_val if true_val != 0 else float("nan")
+
+        print(
+            f"{t:12.4e} | "
+            f"{true_val:14.6e} | "
+            f"{pred_val:14.6e} | "
+            f"{abs_err:14.6e} | "
+            f"{rel_err:14.6e}"
+        )
+
+
 ## Generate problem instance
 R, SIGMA, MU = generate_instance(d = d)
 alpha = compute_alpha()
@@ -268,8 +300,8 @@ print("Sigma:", SIGMA)
 print("Mu:", MU)
 
 excluded_boxes = []
-for real_pole in set(alpha):
-    excluded_boxes.append((float(real_pole) - 1, float(real_pole) + 1, -1, 1))
+#for real_pole in set(alpha):
+#    excluded_boxes.append((float(real_pole) - 1, float(real_pole) + 1, -1, 1))
 
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 
@@ -287,9 +319,9 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=50000, lr=1e-3, T0=50000, eta_min=1e-5),
+        dict(epochs=40000, lr=1e-3, T0=40000, eta_min=1e-5),
         # Refine BAR fit
-        dict(epochs=50000, lr=1e-5, T0=50000, eta_min=1e-7),
+        dict(epochs=40000, lr=1e-5, T0=40000, eta_min=1e-7),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -347,6 +379,9 @@ if d == 2:
         true_prob_lst.append(ans)
         predicted = tail_prob_predicted(mgf_trainer, t)
         predicted_prob_lst.append(predicted)
+    
+    print("Tail probabilities:")
+    print_table(t_lst, true_prob_lst, predicted_prob_lst)
 
     plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
     plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
@@ -371,6 +406,9 @@ if d == 2:
         ans = laplace_xsum(float(s))
         true_laplace_lst.append(ans)
     predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
+    
+    print("Laplace values:")
+    print_table(s_lst, true_laplace_lst, predicted_laplace_lst)
 
     print("Real range:", MIN_REAL, MAX_REAL)
     print("Imag range:", MIN_IMAG, MAX_IMAG)

@@ -723,11 +723,9 @@ class MGFTrainer:
 
         for i in range(d):
             theta_clamp = theta.clone()
-            ## TODO: Note that the theta_clamp is currently hard-coded
-            if i == 1:
-                theta_clamp[:, 1] = theta_clamp[:,0]
-            else:
-                theta_clamp[:, 1] = 0
+            ## TODO: Note that the theta_clamp only supports R such that R[i,i] = 1 and R[i,i-1] = -1
+            theta_clamp[:, 0:(i+1)] = theta_clamp[:,0:1]
+            theta_clamp[:, (i+1):] = 0
             gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
             output = model(theta_clamp)
             log_phi_theta = output[:, 0]
@@ -735,25 +733,6 @@ class MGFTrainer:
             lhs = torch.log(gamma_theta) + log_phi_theta
             rhs = torch.log(gamma_i_theta[:,i]) + log_phi_i_theta[:,i]
             loss += torch.mean(torch.abs(lhs - rhs) ** 2)
-        return loss / max(d, 1)
-    
-    def boundary_consistency_penalty_old(self, model, theta):
-        """
-        Enforces interior restricted to theta_i=0 matches boundary network i in BAR.
-        theta: (N,d) complex
-        """
-        d = theta.shape[1]
-        loss = 0.0
-
-        for i in range(d):
-            theta_clamp = theta.clone()
-            ## TODO: Note that the theta_clamp is currently hard-coded
-            theta_clamp[:,i] = 0
-            gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
-            output = model(theta_clamp)
-            log_phi_theta = output[:, 0]
-            log_phi_i_theta = output[:, 1:]
-            loss += torch.mean(torch.abs(log_phi_theta - log_phi_i_theta[:,i]) ** 2)
         return loss / max(d, 1)
     
     def growth_penalty(self, model, s, C=1.0):

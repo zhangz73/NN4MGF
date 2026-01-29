@@ -14,12 +14,12 @@ from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
 d = 2
-TRAIN_LB = -10
-TRAIN_UB = 2
-TRAIN_IMAG_LB = -5
-TRAIN_IMAG_UB = 5
-EVAL_LB = -10
-EVAL_UB = 0
+TRAIN_LB = -5
+TRAIN_UB = 0.5
+TRAIN_IMAG_LB = -16
+TRAIN_IMAG_UB = 16
+EVAL_LB = -5
+EVAL_UB = 0.5
 RETRAIN = True
 
 MU1 = -1.
@@ -100,7 +100,7 @@ def laplace_xsum(s):
 
     # do the double integral over [0, inf) x [0, inf)
     val = mp.quad(lambda x1: mp.quad(lambda x2: integrand(x1,x2), [0, mp.inf]), [0, mp.inf])
-    return float(val / s)
+    return val
 
 ## Assume s is a 1-d pytorch tensor
 def laplace_2d_to_xsum(model, s_lst):
@@ -118,12 +118,13 @@ def laplace_2d_to_xsum(model, s_lst):
     with torch.no_grad():
         output = model.eval(-input)
         joint_laplace = output[:,0]
-    ans = torch.empty_like(joint_laplace)
-    # Case 1: s != 0
-    mask = s_lst != 0
-    ans[mask] = joint_laplace[mask] / s_lst[mask]
-    # Case 2: s = 0 → Laplace transform must equal 1
-    ans[~mask] = 1.0
+#    ans = torch.empty_like(joint_laplace)
+#    # Case 1: s != 0
+#    mask = s_lst != 0
+#    ans[mask] = joint_laplace[mask] / s_lst[mask]
+#    # Case 2: s = 0 → Laplace transform must equal 1
+#    ans[~mask] = 1.0
+    ans = joint_laplace
     return ans
 
 def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
@@ -133,12 +134,43 @@ def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
     lattice = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).double()
     return lattice
 
+def print_table(t_lst, true_lst, predicted_lst):
+    assert len(t_lst) == len(true_lst) == len(predicted_lst)
+    true_lst = [float(x) for x in true_lst]
+    predicted_lst = [float(x) for x in predicted_lst]
+
+    header = (
+        f"{'t':>12} | "
+        f"{'true value':>14} | "
+        f"{'pred value':>14} | "
+        f"{'abs error':>14} | "
+        f"{'rel error':>14}"
+    )
+    sep = "-" * len(header)
+
+    print(header)
+    print(sep)
+
+    for t, true_val, pred_val in zip(t_lst, true_lst, predicted_lst):
+        abs_err = abs(pred_val - true_val)
+        rel_err = abs_err / true_val if true_val != 0 else float("nan")
+
+        print(
+            f"{t:12.4e} | "
+            f"{true_val:14.6e} | "
+            f"{pred_val:14.6e} | "
+            f"{abs_err:14.6e} | "
+            f"{rel_err:14.6e}"
+        )
+
 ## Training
+excluded_boxes = []
 mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 if RETRAIN:
     anchor_set = None
     joint_rounds = [
-        dict(epochs=20000, lr=1e-3, T0=20000, eta_min=3e-4),
+        dict(epochs=40000, lr=1e-3, T0=40000, eta_min=1e-5),
+        dict(epochs=40000, lr=1e-5, T0=40000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-4, T0=5000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]
@@ -148,13 +180,13 @@ if RETRAIN:
 #        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-8)
 #    ] * 3
     individual_rounds = None
-    t_lst = list(range(1, 6))
-    for t in tqdm(t_lst):
-        predicted = tail_prob_predicted(mgf_trainer, t)
-    s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
-    predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
-    theta_eval = torch.cat(THETA_LST, dim = 0)
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, full_gradient = False, theta_eval = theta_eval, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = 1e2, lam_CR = 1e2, lam_growth = 0, anchor_set = anchor_set)
+    lam_monotone = 1e1
+    lam_CR = 1e1
+    lam_growth = 0
+    lam_zero_anchor = 1e-1
+    lam_boundary_consistent = 1e1
+    
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = 1024, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()
@@ -173,6 +205,9 @@ for t in tqdm(t_lst):
     predicted = tail_prob_predicted(mgf_trainer, t)
     predicted_prob_lst.append(predicted)
 
+print("Tail probabilities:")
+print_table(t_lst, true_prob_lst, predicted_prob_lst)
+
 plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
 plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
 plt.legend()
@@ -190,13 +225,16 @@ MIN_REAL, MAX_REAL = float("inf"), -float("inf")
 MIN_IMAG, MAX_IMAG = float("inf"), -float("inf")
 
 ## Comparing Laplace transform of X1 + X2 against ground truth
-s_lst = torch.linspace(-EVAL_UB, -EVAL_LB, steps = 11)[1:]
+s_lst = torch.linspace(0, 5, steps = 6)[1:]
 true_laplace_lst = []
 for s in tqdm(s_lst):
     ans = laplace_xsum(float(s))
     true_laplace_lst.append(ans)
 predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
 
+print("Laplace values:")
+print_table(s_lst, true_laplace_lst, predicted_laplace_lst)
+    
 print("Real range:", MIN_REAL, MAX_REAL)
 print("Imag range:", MIN_IMAG, MAX_IMAG)
 

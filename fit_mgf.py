@@ -615,7 +615,7 @@ class MGFTrainer:
             self.R = torch.complex(R, torch.zeros_like(R)).to(device = self.device)
         self.model = MGFNet(self.d, hidden_dim = hidden_dim).double().to(device = self.device)
         self.dir = dir
-        self.engine = SobolEngine(dimension=d)
+        self.engine = SobolEngine(dimension=d, scramble = True)
     
     # ---- Define monotonicity penalty ----
     def monotonicity_penalty(
@@ -779,7 +779,8 @@ class MGFTrainer:
             # oversample to reduce rejection loops
             n_try = int(remaining * 1.5) + 16
 
-            real = (ub - lb) * torch.rand(n_try, self.d, device=self.device).double() + lb
+#            real = (ub - lb) * torch.rand(n_try, self.d, device=self.device).double() + lb
+            real = (ub - lb) * self.engine.draw(n_try).to(self.device).double() + lb
             imag = (imag_ub - imag_lb) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb
 
             # ---- exclusion mask ----

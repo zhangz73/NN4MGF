@@ -15,7 +15,7 @@ from typing import Callable
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
-d = 30
+d = 5
 TRAIN_LB = -5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -16

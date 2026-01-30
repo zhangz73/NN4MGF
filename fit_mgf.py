@@ -319,7 +319,7 @@ class LogGMFNet(nn.Module):
         fmin: float = 1e-2,
         fmax_x: float = 1.5,
         fmax_y: float = 2.0,
-        use_pairwise: bool = True,
+        use_pairwise: bool = False,
         dtype: torch.dtype = torch.float64,
     ):
         super().__init__()
@@ -680,10 +680,10 @@ class MGFTrainer:
         f_int = out[:, 0:1]  # (N,1)
         u, v = f_int.real, f_int.imag
 
-        u_x = torch.autograd.grad(u.sum(), x, create_graph=True)[0]
-        u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
-        v_x = torch.autograd.grad(v.sum(), x, create_graph=True)[0]
-        v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
+        u_x, u_y = torch.autograd.grad(u.sum(), (x, y), create_graph=True)
+        #u_y = torch.autograd.grad(u.sum(), y, create_graph=True)[0]
+        v_x, v_y = torch.autograd.grad(v.sum(), (x, y), create_graph=True)
+        #v_y = torch.autograd.grad(v.sum(), y, create_graph=True)[0]
 
         cr_int = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
 
@@ -701,10 +701,10 @@ class MGFTrainer:
 
             u, v = f.real, f.imag
 
-            u_x = torch.autograd.grad(u.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
-            u_y = torch.autograd.grad(u.sum(), y_sub, create_graph=True)[0]
-            v_x = torch.autograd.grad(v.sum(), x_sub, create_graph=True)[0]
-            v_y = torch.autograd.grad(v.sum(), y_sub, create_graph=True)[0]
+            u_x, u_y = torch.autograd.grad(u.sum(), (x_sub, y_sub), create_graph=True)  # (N,d-1)
+            #u_y = torch.autograd.grad(u.sum(), y_sub, create_graph=True)[0]
+            v_x, v_y = torch.autograd.grad(v.sum(), (x_sub, y_sub), create_graph=True)
+            #v_y = torch.autograd.grad(v.sum(), y_sub, create_graph=True)[0]
 
             cr_i = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
             cr_b = cr_b + cr_i
@@ -1082,8 +1082,8 @@ class MGFTrainer:
                 total_loss_arr.append(loss.item())
                 bar_mse_arr.append(bar_mse.item())
                 bar_mse_norm_arr.append(bar_mse_norm.item())
-                cr_loss_arr.append(cr.item() if torch.is_tensor(cr) else 0.0)
-                mono_loss_arr.append(mono_loss.item() if torch.is_tensor(mono_loss) else 0.0)
+                cr_loss_arr.append(cr.detach().item() if torch.is_tensor(cr) else 0.0)
+                mono_loss_arr.append(mono_loss.detach().item() if torch.is_tensor(mono_loss) else 0.0)
 
         # --------------------------------------------------
         # Individual training rounds

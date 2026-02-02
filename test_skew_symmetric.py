@@ -347,9 +347,9 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=40000, lr=1e-3, T0=40000, eta_min=3e-4),
+        dict(epochs=40000, lr=1e-3, T0=40000, eta_min=1e-3),
         # Refine BAR fit
-        dict(epochs=40000, lr=1e-4, T0=40000, eta_min=1e-5),
+        #dict(epochs=40000, lr=1e-3, T0=40000, eta_min=1e-4),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -363,7 +363,7 @@ if RETRAIN:
     lam_growth = 0
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
-    batch_size = 4096 #8192#16384
+    batch_size = 1024 #8192#16384
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),

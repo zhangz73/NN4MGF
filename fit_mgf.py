@@ -781,9 +781,9 @@ class MGFTrainer:
 
             real_lb_min = (ub - lb) * torch.rand(n_try, 1, device=self.device).double() + lb
             imag_lb_min = (imag_ub - imag_lb) * torch.rand(n_try, 1, device=self.device).double() + imag_lb
-            real = (ub - real_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + lb
+            real = (ub - real_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + real_lb_min
 #            real = (ub - lb) * self.engine.draw(n_try).to(self.device).double() + lb
-            imag = (imag_ub - imag_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb
+            imag = (imag_ub - imag_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb_min
 
             # ---- exclusion mask ----
             keep = torch.ones(n_try, dtype=torch.bool, device=self.device)

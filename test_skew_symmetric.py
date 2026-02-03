@@ -347,7 +347,7 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=100000, lr=3e-4, T0=100000, eta_min=1e-4),
+        dict(epochs=40000, lr=1e-3, T0=40000, eta_min=1e-4),
         # Refine BAR fit
         #dict(epochs=100000, lr=1e-4, T0=100000, eta_min=1e-5),
 #        # Final polishing

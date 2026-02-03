@@ -556,10 +556,10 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):
@@ -989,6 +989,7 @@ class MGFTrainer:
         excluded_boxes = None,
         full_gradient=False, theta_eval=None,
         batch_size=500,
+        train_freq=1,
 
         # Joint phase
         joint_rounds=None,
@@ -1045,43 +1046,54 @@ class MGFTrainer:
                 T_mult=1,
                 eta_min=eta_min,
             )
-
+            
             for epoch in tqdm(range(epochs), desc="Joint training"):
-                theta = theta_eval.clone() if full_gradient else \
-                        self.sample_vector(lb=lb, ub=ub, imag_lb=imag_lb, imag_ub=imag_ub, excluded_boxes = excluded_boxes, batch_size=batch_size)
-                if anchor_set is not None and not full_gradient:
-                    theta = torch.cat([theta, anchor_set], dim = 0)
-
-                output = self.model(theta)
-                log_phi_theta = output[:, 0:1]
-                log_phi_i_theta = output[:, 1:]
-                phi_theta = torch.exp(log_phi_theta)
-                phi_i_theta = torch.exp(log_phi_i_theta)
-
-                # BAR loss in log space
-                bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
-                bar_mse_norm = self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
-                log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
-
-                s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
-                M0 = self.model(s0)[:,0]
-                anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
-
-                # Penalties
-                cr = self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+                loss = 0.0
+                bar_mse = 0.0
+                bar_mse_norm = 0.0
+                log_bar_mse = 0.0
+                anchor_penalty = 0.0
+                cr = 0.0
+                mono_loss = 0.0
+                growth_loss = 0.0
+                boundary_consistency_loss = 0.0
                 
-                mono_loss = self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
-                growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
-                boundary_consistency_loss = self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
-                
-                loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
+                for _ in range(train_freq):
+                    theta = theta_eval.clone() if full_gradient else \
+                            self.sample_vector(lb=lb, ub=ub, imag_lb=imag_lb, imag_ub=imag_ub, excluded_boxes = excluded_boxes, batch_size=batch_size)
+                    if anchor_set is not None and not full_gradient:
+                        theta = torch.cat([theta, anchor_set], dim = 0)
 
+                    output = self.model(theta)
+                    log_phi_theta = output[:, 0:1]
+                    log_phi_i_theta = output[:, 1:]
+                    phi_theta = torch.exp(log_phi_theta)
+                    phi_i_theta = torch.exp(log_phi_i_theta)
+
+                    # BAR loss in log space
+                    bar_mse += self.bar_loss(theta, phi_theta, phi_i_theta)
+                    bar_mse_norm += self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
+                    log_bar_mse += self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
+
+                    s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
+                    M0 = self.model(s0)[:,0]
+                    anchor_penalty += (torch.exp(M0) - 1.0).abs().mean()
+
+                    # Penalties
+                    cr += self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+                    
+                    mono_loss += self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
+                    growth_loss += self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                    boundary_consistency_loss += self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
+                    
+                    loss += bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
+                
                 optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
-
+                    
                 total_loss_arr.append(loss.item())
                 bar_mse_arr.append(bar_mse.item())
                 bar_mse_norm_arr.append(bar_mse_norm.item())

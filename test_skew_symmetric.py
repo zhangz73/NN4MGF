@@ -363,7 +363,8 @@ if RETRAIN:
     lam_growth = 0
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
-    batch_size = 16384 #8192#16384
+    batch_size = 25000 #8192#16384
+    train_freq = 2
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
@@ -373,7 +374,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = batch_size, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = batch_size, train_freq = train_freq, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

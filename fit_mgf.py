@@ -556,10 +556,10 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):
@@ -780,10 +780,10 @@ class MGFTrainer:
             n_try = int(remaining * 1.5) + 16
 
             real_lb_min = (ub - lb) * torch.rand(n_try, 1, device=self.device).double() + lb
-            imag_lb_min = (imag_ub - imag_lb) * torch.rand(n_try, 1, device=self.device).double() + imag_lb
+            imag_bd = max(abs(imag_ub), abs(imag_lb)) * torch.rand(n_try, 1, device=self.device).double()
             real = (ub - real_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + real_lb_min
 #            real = (ub - lb) * self.engine.draw(n_try).to(self.device).double() + lb
-            imag = (imag_ub - imag_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + imag_lb_min
+            imag = 2 * imag_bd * torch.rand(n_try, self.d, device=self.device).double() - imag_bd
 
             # ---- exclusion mask ----
             keep = torch.ones(n_try, dtype=torch.bool, device=self.device)

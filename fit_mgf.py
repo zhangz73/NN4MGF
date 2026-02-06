@@ -556,10 +556,10 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
     def forward(self, x):
@@ -646,6 +646,7 @@ class MGFTrainer:
         # ---------- boundaries ----------
         mono_b = 0.0
         imag_b = 0.0
+        """
         for i in range(d):
             x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
@@ -658,7 +659,8 @@ class MGFTrainer:
 
         mono_b = mono_b / max(d, 1)
         imag_b = imag_b / max(d, 1)
-
+        """
+        
         return (
             w_interior * mono_int
             + w_boundary * mono_b
@@ -689,6 +691,7 @@ class MGFTrainer:
 
         # ---- boundaries: f_i depends on (d-1) coords ----
         cr_b = 0.0
+        """
         d = z.shape[1]
         for i in range(d):
             # build reduced complex input (N, d-1) as independent variables
@@ -710,7 +713,7 @@ class MGFTrainer:
             cr_b = cr_b + cr_i
 
         cr_b = cr_b / max(d, 1)
-
+        """
         return w_interior * cr_int + w_boundary * cr_b
 
     def boundary_consistency_penalty(self, model, theta):

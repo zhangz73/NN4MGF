@@ -556,16 +556,18 @@ class MGFNet(nn.Module):
         self.d = d
         omega_0 = 1.0
 #        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
-        self.interior_network = LogGMFNet(self.d, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
         self.boundary_networks = nn.ModuleList()
         for i in range(self.d):
-            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 32, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
 #            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
-    def forward(self, x):
+    def forward(self, x, subset = None):
         phi = self.interior_network(x)
         phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = phi.device)
-        for i in range(self.d):
+        if subset is None:
+            subset = list(range(self.d))
+        for i in subset:
             input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
             phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
         return torch.concat([phi, phi_i], dim = 1)
@@ -646,7 +648,7 @@ class MGFTrainer:
         # ---------- boundaries ----------
         mono_b = 0.0
         imag_b = 0.0
-        """
+
         for i in range(d):
             x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
@@ -659,7 +661,6 @@ class MGFTrainer:
 
         mono_b = mono_b / max(d, 1)
         imag_b = imag_b / max(d, 1)
-        """
         
         return (
             w_interior * mono_int
@@ -691,7 +692,6 @@ class MGFTrainer:
 
         # ---- boundaries: f_i depends on (d-1) coords ----
         cr_b = 0.0
-        """
         d = z.shape[1]
         for i in range(d):
             # build reduced complex input (N, d-1) as independent variables
@@ -713,7 +713,6 @@ class MGFTrainer:
             cr_b = cr_b + cr_i
 
         cr_b = cr_b / max(d, 1)
-        """
         return w_interior * cr_int + w_boundary * cr_b
 
     def boundary_consistency_penalty(self, model, theta):
@@ -730,7 +729,7 @@ class MGFTrainer:
             theta_clamp[:, 0:(i+1)] = theta_clamp[:,0:1]
             theta_clamp[:, (i+1):] = 0
             gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
-            output = model(theta_clamp)
+            output = model(theta_clamp, subset = i)
             log_phi_theta = output[:, 0]
             log_phi_i_theta = output[:, 1:]
             lhs = torch.log(gamma_theta) + log_phi_theta
@@ -888,8 +887,6 @@ class MGFTrainer:
 #            return loss_log + w_rel * loss_rel
 
         return loss
-
-
     
     def train_from_target(self, target_mgf_func, full_gradient = False, theta_eval = None, lb = -1, ub = 0, imag_lb=-0.5, imag_ub=0.5, batch_size = 500, num_epochs = 10000, init_lr = 1e-3, lam_monotone = 0.1, lam_CR = 1e-3, lam_growth = 1e-4):
         if full_gradient:

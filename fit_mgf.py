@@ -638,7 +638,7 @@ class MGFTrainer:
         # ---------- interior ----------
         x = s.real.clone().detach().requires_grad_(True)   # (N,d)
         z0 = torch.complex(x, torch.zeros_like(x))
-        logM_all = model(z0)                               # (N, d+1)
+        logM_all = model.interior_network(z0)                               # (N, d+1)
         logM_int = logM_all[:, 0:1]                        # (N,1)
 
         grad_int = torch.autograd.grad(logM_int.real.sum(), x, create_graph=True)[0]  # (N,d)
@@ -649,6 +649,7 @@ class MGFTrainer:
         mono_b = 0.0
         imag_b = 0.0
 
+        """
         for i in range(d):
             x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
@@ -658,7 +659,7 @@ class MGFTrainer:
             grad_bi = torch.autograd.grad(logM_bi.real.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
             mono_b = mono_b + torch.relu(-grad_bi).mean()
             imag_b = imag_b + (logM_bi.imag ** 2).mean()
-
+        """
         mono_b = mono_b / max(d, 1)
         imag_b = imag_b / max(d, 1)
         
@@ -679,7 +680,7 @@ class MGFTrainer:
         y = z.imag.clone().detach().requires_grad_(True)  # (N,d)
         z_xy = torch.complex(x, y)
 
-        out = model(z_xy)  # (N, d+1)
+        out = model.interior_network(z_xy)  # (N, d+1)
         f_int = out[:, 0:1]  # (N,1)
         u, v = f_int.real, f_int.imag
 
@@ -693,6 +694,7 @@ class MGFTrainer:
         # ---- boundaries: f_i depends on (d-1) coords ----
         cr_b = 0.0
         d = z.shape[1]
+        """
         for i in range(d):
             # build reduced complex input (N, d-1) as independent variables
             x_sub = torch.cat([z.real[:, :i], z.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
@@ -711,7 +713,7 @@ class MGFTrainer:
 
             cr_i = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
             cr_b = cr_b + cr_i
-
+        """
         cr_b = cr_b / max(d, 1)
         return w_interior * cr_int + w_boundary * cr_b
 
@@ -729,7 +731,7 @@ class MGFTrainer:
             theta_clamp[:, 0:(i+1)] = theta_clamp[:,0:1]
             theta_clamp[:, (i+1):] = 0
             gamma_theta, gamma_i_theta = self.gamma(theta_clamp)
-            output = model(theta_clamp, subset = i)
+            output = model(theta_clamp, subset = [i])
             log_phi_theta = output[:, 0]
             log_phi_i_theta = output[:, 1:]
             lhs = torch.log(gamma_theta) + log_phi_theta
@@ -815,7 +817,11 @@ class MGFTrainer:
     
     ## Assume theta is a N x d matrix
     def gamma(self, theta):
-        gamma_theta = -(0.5 * torch.diagonal(theta @ self.SIGMA @ theta.T) + (theta @ self.MU).flatten()).flatten()
+        #gamma_theta = -(0.5 * torch.diagonal(theta @ self.SIGMA @ theta.T) + (theta @ self.MU).flatten()).flatten()
+        tmp = theta @ self.SIGMA              # (N, d)
+        quad = (tmp * theta).sum(dim=1)       # (N,) == diag(theta SIGMA theta^T)
+        lin = (theta @ self.MU).squeeze(-1)   # (N,)
+        gamma_theta = -(0.5 * quad + lin)     # (N,)
         gamma_i_theta = theta @ self.R
         return gamma_theta, gamma_i_theta
 

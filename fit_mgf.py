@@ -624,6 +624,8 @@ class MGFTrainer:
         self,
         model,
         s,
+        max_grad_sample=1024,
+        max_boundary_grad_sample=128,
         lambda_imag=0.1,
         w_interior=1.0,
         w_boundary=1.0,
@@ -633,6 +635,7 @@ class MGFTrainer:
           - interior: Re(logM_int) monotone in each coordinate, Im(logM_int) ~ 0
           - boundary i: Re(logM_bi) monotone in each active coordinate (d-1 of them), Im(logM_bi) ~ 0
         """
+        s = s[torch.randperm(s.size(0), device=s.device)[:max_grad_sample]]
         d = s.shape[1]
 
         # ---------- interior ----------
@@ -648,8 +651,8 @@ class MGFTrainer:
         # ---------- boundaries ----------
         mono_b = 0.0
         imag_b = 0.0
+        s = s[torch.randperm(s.size(0), device=s.device)[:max_boundary_grad_sample]]
 
-        """
         for i in range(d):
             x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
@@ -659,7 +662,7 @@ class MGFTrainer:
             grad_bi = torch.autograd.grad(logM_bi.real.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
             mono_b = mono_b + torch.relu(-grad_bi).mean()
             imag_b = imag_b + (logM_bi.imag ** 2).mean()
-        """
+        
         mono_b = mono_b / max(d, 1)
         imag_b = imag_b / max(d, 1)
         
@@ -670,11 +673,12 @@ class MGFTrainer:
         )
 
     
-    def cauchy_riemann_penalty(self, model, z, w_interior=1.0, w_boundary=1.0):
+    def cauchy_riemann_penalty(self, model, z, max_grad_sample = 1024, max_boundary_grad_sample = 128, w_interior=1.0, w_boundary=1.0):
         """
         model(z): (N, d+1) complex, but boundary nets are f_i: C^{d-1} -> C
         z: (N, d) complex
         """
+        z = z[torch.randperm(z.size(0), device=z.device)[:max_grad_sample]]
         # ---- interior ----
         x = z.real.clone().detach().requires_grad_(True)  # (N,d)
         y = z.imag.clone().detach().requires_grad_(True)  # (N,d)
@@ -693,8 +697,9 @@ class MGFTrainer:
 
         # ---- boundaries: f_i depends on (d-1) coords ----
         cr_b = 0.0
+        z = z[torch.randperm(z.size(0), device=z.device)[:max_boundary_grad_sample]]
         d = z.shape[1]
-        """
+
         for i in range(d):
             # build reduced complex input (N, d-1) as independent variables
             x_sub = torch.cat([z.real[:, :i], z.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
@@ -713,7 +718,7 @@ class MGFTrainer:
 
             cr_i = ((u_x - v_y) ** 2 + (u_y + v_x) ** 2).mean()
             cr_b = cr_b + cr_i
-        """
+
         cr_b = cr_b / max(d, 1)
         return w_interior * cr_int + w_boundary * cr_b
 
@@ -995,6 +1000,8 @@ class MGFTrainer:
         excluded_boxes = None,
         full_gradient=False, theta_eval=None,
         batch_size=500,
+        max_grad_sample=1024,
+        max_boundary_grad_sample=128,
         train_freq=1,
 
         # Joint phase
@@ -1086,9 +1093,9 @@ class MGFTrainer:
                     anchor_penalty += (torch.exp(M0) - 1.0).abs().mean()
 
                     # Penalties
-                    cr += self.cauchy_riemann_penalty(self.model, theta) if lam_CR > 0 else 0.0
+                    cr += self.cauchy_riemann_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_CR > 0 else 0.0
                     
-                    mono_loss += self.monotonicity_penalty(self.model, theta) if lam_monotone > 0 else 0.0
+                    mono_loss += self.monotonicity_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_monotone > 0 else 0.0
                     growth_loss += self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
                     boundary_consistency_loss += self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
                     

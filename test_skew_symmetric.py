@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import mpmath as mp
 import numpy as np
@@ -15,7 +16,7 @@ from typing import Callable
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
-d = 5
+d = 25
 TRAIN_LB = -5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -5
@@ -347,9 +348,9 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=400000, lr=1e-3, T0=400000, eta_min=1e-4),
+        dict(epochs=200000, lr=1e-3, T0=200000, eta_min=1e-4),
         # Refine BAR fit
-        dict(epochs=400000, lr=1e-4, T0=400000, eta_min=1e-5),
+        dict(epochs=200000, lr=1e-4, T0=200000, eta_min=1e-5),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -364,6 +365,8 @@ if RETRAIN:
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
     batch_size = 16384 #4096 #8192#16384
+    max_grad_sample = 1024
+    max_boundary_grad_sample = 128
     train_freq = 1
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
@@ -374,7 +377,7 @@ if RETRAIN:
 #        dict(epochs=2000,  lr=1e-3, T0=5000, eta_min=1e-6)
 #    ] * 1
     individual_rounds = None
-    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = batch_size, train_freq = train_freq, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
+    mgf_trainer.train(lb = TRAIN_LB, ub = TRAIN_UB, imag_lb = TRAIN_IMAG_LB, imag_ub = TRAIN_IMAG_UB, excluded_boxes = excluded_boxes, full_gradient = False, theta_eval = None, batch_size = batch_size, max_grad_sample = max_grad_sample, max_boundary_grad_sample = max_boundary_grad_sample, train_freq = train_freq, joint_rounds = joint_rounds, individual_rounds = individual_rounds, lam_monotone = lam_monotone, lam_CR = lam_CR, lam_growth = lam_growth, lam_zero_anchor = lam_zero_anchor, lam_boundary_consistent = lam_boundary_consistent, anchor_set = anchor_set)
     mgf_trainer.save()
 else:
     mgf_trainer.load()

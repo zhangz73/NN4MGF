@@ -1070,6 +1070,7 @@ class MGFTrainer:
                 mono_loss = 0.0
                 growth_loss = 0.0
                 boundary_consistency_loss = 0.0
+                optimizer.zero_grad(set_to_none=True)
                 
                 for _ in range(train_freq):
                     theta = theta_eval.clone() if full_gradient else \
@@ -1084,25 +1085,26 @@ class MGFTrainer:
                     phi_i_theta = torch.exp(log_phi_i_theta)
 
                     # BAR loss in log space
-                    bar_mse += self.bar_loss(theta, phi_theta, phi_i_theta)
-                    bar_mse_norm += self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
-                    log_bar_mse += self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
+                    bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+                    bar_mse_norm = self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
+                    log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
 
                     s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
                     M0 = self.model(s0)[:,0]
-                    anchor_penalty += (torch.exp(M0) - 1.0).abs().mean()
+                    anchor_penalty = (torch.exp(M0) - 1.0).abs().mean()
 
                     # Penalties
-                    cr += self.cauchy_riemann_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_CR > 0 else 0.0
+                    cr = self.cauchy_riemann_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_CR > 0 else 0.0
                     
-                    mono_loss += self.monotonicity_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_monotone > 0 else 0.0
-                    growth_loss += self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
-                    boundary_consistency_loss += self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
+                    mono_loss = self.monotonicity_penalty(self.model, theta, max_grad_sample=max_grad_sample, max_boundary_grad_sample=max_boundary_grad_sample) if lam_monotone > 0 else 0.0
+                    growth_loss = self.growth_penalty(self.model, theta) if lam_growth > 0 else 0.0
+                    boundary_consistency_loss = self.boundary_consistency_penalty(self.model, theta) if lam_boundary_consistent > 0 else 0.0
                     
-                    loss += bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
-                
-                optimizer.zero_grad()
-                loss.backward()
+                    loss = bar_mse_norm + lam_zero_anchor * anchor_penalty + lam_CR * cr + lam_monotone * mono_loss + lam_growth * growth_loss + lam_boundary_consistent * boundary_consistency_loss
+                    loss.backward()
+
+                #optimizer.zero_grad()
+                #loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()

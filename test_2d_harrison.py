@@ -134,7 +134,7 @@ def create_lattice(real_lb, real_ub, imag_lb, imag_ub, n_points_per_dim = 50):
     lattice = torch.from_numpy(np.stack([X.ravel(), Y.ravel()], axis = 1)).double()
     return lattice
 
-def print_table(t_lst, true_lst, predicted_lst):
+def print_table(file, t_lst, true_lst, predicted_lst):
     assert len(t_lst) == len(true_lst) == len(predicted_lst)
     true_lst = [float(x) for x in true_lst]
     predicted_lst = [float(x) for x in predicted_lst]
@@ -150,18 +150,22 @@ def print_table(t_lst, true_lst, predicted_lst):
 
     print(header)
     print(sep)
+    file.write(header + "\n")
+    file.write(sep + "\n")
 
     for t, true_val, pred_val in zip(t_lst, true_lst, predicted_lst):
         abs_err = abs(pred_val - true_val)
         rel_err = abs_err / true_val if true_val != 0 else float("nan")
-
-        print(
+        row = (
             f"{t:12.4e} | "
             f"{true_val:14.6e} | "
             f"{pred_val:14.6e} | "
             f"{abs_err:14.6e} | "
             f"{rel_err:14.6e}"
         )
+
+        print(row)
+        file.write(row + "\n")
 
 ## Training
 excluded_boxes = []
@@ -195,6 +199,14 @@ else:
 first_moment = mgf_trainer.get_first_moment()
 print(first_moment)
 
+with open(f"Plots/{scheme}/tables.txt", "w") as file:
+    file.write("Mean queue lengths:\n")
+    d_lst = list(range(d))
+    true_mean_lst = [0.5, 0.75]
+    mean_lst = [float(x) for x in first_moment]
+    print_table(file, d_lst, true_mean_lst, mean_lst)
+    file.write("\n\n")
+
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 6))
 true_prob_lst = []
@@ -205,8 +217,11 @@ for t in tqdm(t_lst):
     predicted = tail_prob_predicted(mgf_trainer, t)
     predicted_prob_lst.append(predicted)
 
-print("Tail probabilities:")
-print_table(t_lst, true_prob_lst, predicted_prob_lst)
+with open(f"Plots/{scheme}/tables.txt", "a") as file:
+    print("Tail probabilities:")
+    file.write("Tail probabilities:\n")
+    print_table(file, t_lst, true_prob_lst, predicted_prob_lst)
+    file.write("\n\n")
 
 plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
 plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
@@ -232,8 +247,10 @@ for s in tqdm(s_lst):
     true_laplace_lst.append(ans)
 predicted_laplace_lst = laplace_2d_to_xsum(mgf_trainer, s_lst).real.tolist()
 
-print("Laplace values:")
-print_table(s_lst, true_laplace_lst, predicted_laplace_lst)
+with open(f"Plots/{scheme}/tables.txt", "a") as file:
+    print("Laplace values:")
+    file.write("Laplace values:\n")
+    print_table(file, s_lst, true_laplace_lst, predicted_laplace_lst)
     
 print("Real range:", MIN_REAL, MAX_REAL)
 print("Imag range:", MIN_IMAG, MAX_IMAG)

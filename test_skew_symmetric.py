@@ -402,17 +402,31 @@ for i in range(d):
     if d == 2:
         mgf_trainer.plot_compare_heatmap(real_lb = EVAL_LB, real_ub = EVAL_UB, imag_lb = EVAL_IMAG_LB, imag_ub = EVAL_IMAG_UB, phi_theta = phi_i_theta[:,i], phi_theta_true = phi_i_theta_true[:,i], title = f"Boundary {i}")
 
+## Compute first moment
+first_moment = mgf_trainer.get_first_moment()
+print("Mean queue lengths:", first_moment)
+print("True mean queue lengths:", [1/x for x in alpha])
+
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 6))
 true_prob_lst = []
 predicted_prob_lst = []
+
+with open(f"Plots/{scheme}/tables.txt", "w") as file:
+    file.write("Mean queue lengths:\n")
+    d_lst = list(range(d))
+    true_mean_lst = [float(1/x) for x in alpha]
+    mean_lst = [float(x) for x in first_moment]
+    print_table(file, d_lst, true_mean_lst, mean_lst)
+    file.write("\n\n")
+    
 for t in tqdm(t_lst):
     ans = tail_prob(t)
     true_prob_lst.append(float(ans))
     predicted = tail_prob_predicted(mgf_trainer, t)
     predicted_prob_lst.append(predicted)
 
-with open(f"Plots/{scheme}/tables.txt", "w") as file:
+with open(f"Plots/{scheme}/tables.txt", "a") as file:
     print("Tail probabilities:")
     file.write("Tail probabilities:\n")
     print_table(file, t_lst, true_prob_lst, predicted_prob_lst)
@@ -422,7 +436,7 @@ plt.scatter(t_lst, true_prob_lst, label = "Ground Truth", color = "red")
 plt.plot(t_lst, predicted_prob_lst, label = "Predicted")
 plt.legend()
 plt.xlabel("t")
-plt.ylabel("P(X1 + X2 > t)")
+plt.ylabel(r"P($\sum_i$ $X_i$ > t)")
 plt.title(f"Trained on $\\theta$ $\\in$ [{TRAIN_LB}, {TRAIN_UB}]^2")
 plt.savefig(f"Plots/{scheme}/tail_prob.png")
 plt.clf()
@@ -448,7 +462,7 @@ plt.scatter(s_lst, true_laplace_lst, label = "Ground Truth", color = "red")
 plt.plot(s_lst, predicted_laplace_lst, label = "Predicted")
 plt.legend()
 plt.xlabel("s")
-plt.ylabel("Laplace Transform of X1 + X2")
+plt.ylabel("Laplace Transform of $\sum_i$ $X_i$")
 plt.title(f"Trained on $\\theta$ $\\in$ [{TRAIN_LB}, {TRAIN_UB}]^2")
 plt.savefig(f"Plots/{scheme}/joint_laplace.png")
 plt.clf()

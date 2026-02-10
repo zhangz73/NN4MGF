@@ -1204,7 +1204,6 @@ class MGFTrainer:
         save_plot(cr_loss_arr, "cr_loss", "CR Loss")
         save_plot(mono_loss_arr, "mono_loss", "Monotonicity Loss")
 
-    
     def get_first_moment(self):
         s0 = torch.zeros(
             1, self.d,
@@ -1219,7 +1218,7 @@ class MGFTrainer:
             create_graph=False
         )[0]
         return grad.real.squeeze().tolist()
-    
+        
     def eval(self, x):
         x = x.to(device = self.device)
         with torch.no_grad():

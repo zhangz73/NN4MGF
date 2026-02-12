@@ -749,6 +749,13 @@ class MGFTrainer:
         bound = torch.exp(-C * torch.norm(s, dim=1))
         bound = bound.unsqueeze(1)
         return torch.mean(torch.relu(torch.abs(M) - bound)**2)
+
+    def antithetic_uniform(self, n, d):
+        n2 = n // 2
+        half = torch.rand(n2, d, device=self.device).double()
+        anti_half = 1 - half
+        ret = torch.cat([half, anti_half], dim = 0)
+        return ret
     
     def sample_vector(
         self,
@@ -786,12 +793,15 @@ class MGFTrainer:
                 break
 
             # oversample to reduce rejection loops
-            n_try = int(remaining * 1.5) + 16
+            n_try = int(remaining) #int(remaining * 1.5) + 16
 
-            real_lb_min = (ub - lb) * torch.rand(n_try, 1, device=self.device).double() + lb
+            real_lb_curr = (ub - lb) * torch.rand(n_try, 1, device=self.device).double() ** (1/self.d) + lb
+            real_ub_curr = ub
             imag_bd = max(abs(imag_ub), abs(imag_lb)) * torch.rand(n_try, 1, device=self.device).double()
-            real = (ub - real_lb_min) * torch.rand(n_try, self.d, device=self.device).double() + real_lb_min
+            #real = (real_ub_curr - real_lb_curr) * self.antithetic_uniform(n_try, self.d) + real_lb_curr
+            real = (real_ub_curr - real_lb_curr) * torch.rand(n_try, self.d, device=self.device).double() + real_lb_curr
 #            real = (ub - lb) * self.engine.draw(n_try).to(self.device).double() + lb
+            #imag = 2 * imag_bd * self.antithetic_uniform(n_try, self.d) - imag_bd
             imag = 2 * imag_bd * torch.rand(n_try, self.d, device=self.device).double() - imag_bd
 
             # ---- exclusion mask ----
@@ -1109,9 +1119,9 @@ class MGFTrainer:
                 optimizer.step()
                 scheduler.step()
                     
-                total_loss_arr.append(loss.item())
-                bar_mse_arr.append(bar_mse.item())
-                bar_mse_norm_arr.append(bar_mse_norm.item())
+                total_loss_arr.append(loss.detach().item())
+                bar_mse_arr.append(bar_mse.detach().item())
+                bar_mse_norm_arr.append(bar_mse_norm.detach().item())
                 cr_loss_arr.append(cr.detach().item() if torch.is_tensor(cr) else 0.0)
                 mono_loss_arr.append(mono_loss.detach().item() if torch.is_tensor(mono_loss) else 0.0)
 

@@ -16,7 +16,7 @@ from typing import Callable
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
-d = 25
+d = 10#25
 TRAIN_LB = -5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -5
@@ -350,7 +350,7 @@ if RETRAIN:
         # Warm-up / coarse fit
         dict(epochs=200000, lr=1e-3, T0=200000, eta_min=1e-4),
         # Refine BAR fit
-        dict(epochs=200000, lr=1e-4, T0=200000, eta_min=1e-5),
+        #dict(epochs=200000, lr=1e-4, T0=200000, eta_min=1e-5),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),

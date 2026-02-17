@@ -100,6 +100,15 @@ def compare_density(y_lst, density_predicted, density_true, title):
     plt.savefig(f"Plots/{scheme}/{title.lower().replace(' ', '_')}.png")
     plt.clf()
     plt.close()
+
+def compute_true_moments(N):
+    alpha = compute_alpha()
+    moments = torch.zeros((N, d))
+    curr = 1
+    for n in range(N):
+        curr *= (n+1) / alpha
+        moments[n,:] = curr
+    return moments.tolist()
     
 ## For 2d verification only
 def density(x1, x2):
@@ -403,9 +412,12 @@ for i in range(d):
         mgf_trainer.plot_compare_heatmap(real_lb = EVAL_LB, real_ub = EVAL_UB, imag_lb = EVAL_IMAG_LB, imag_ub = EVAL_IMAG_UB, phi_theta = phi_i_theta[:,i], phi_theta_true = phi_i_theta_true[:,i], title = f"Boundary {i}")
 
 ## Compute first moment
-first_moment = mgf_trainer.get_first_moment()
-print("Mean queue lengths:", first_moment)
-print("True mean queue lengths:", [1/x for x in alpha])
+#first_moment = mgf_trainer.get_first_moment()
+#print("Mean queue lengths:", first_moment)
+#print("True mean queue lengths:", [1/x for x in alpha])
+moment_N = 4
+predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
+true_moments = compute_true_moments(N=moment_N)
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 6))
@@ -413,12 +425,13 @@ true_prob_lst = []
 predicted_prob_lst = []
 
 with open(f"Plots/{scheme}/tables.txt", "w") as file:
-    file.write("Mean queue lengths:\n")
-    d_lst = list(range(d))
-    true_mean_lst = [float(1/x) for x in alpha]
-    mean_lst = [float(x) for x in first_moment]
-    print_table(file, d_lst, true_mean_lst, mean_lst)
-    file.write("\n\n")
+    for n in range(moment_N):
+        file.write(f"Moment #{n+1}:\n")
+        d_lst = list(range(d))
+        true_moment_lst = true_moments[n]
+        pred_moment_lst = predicted_moments[n]
+        print_table(file, d_lst, true_moment_lst, pred_moment_lst)
+        file.write("\n\n")
     
 for t in tqdm(t_lst):
     ans = tail_prob(t)

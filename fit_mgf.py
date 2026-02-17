@@ -1,5 +1,7 @@
 import os
 import math
+import cmath
+from typing import Callable, List, Literal, Optional, Tuple
 import mpmath
 import numpy as np
 import pandas as pd
@@ -10,6 +12,8 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.quasirandom import SobolEngine
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+ComplexFn = Callable[[complex], complex]
 
 torch.set_default_dtype(torch.float64)
 
@@ -1229,7 +1233,192 @@ class MGFTrainer:
             create_graph=False
         )[0]
         return grad.real.squeeze().tolist()
-        
+
+    def _moment_from_mgf_one_n(
+        self,
+        n: int,
+        dim: int,
+        a_n: float,
+        l: int = 2,
+        gamma: float = 11.0,
+        use_log: bool = False,
+    ) -> float:
+        """
+        Compute mu_n = E[X^n] using Algorithm 3's inversion formula (Eq. (33)),
+        where W_n(z) = M(a_n z) and M is the (learned) MGF.
+
+        Parameters
+        ----------
+        n : int
+            Moment order (n >= 1).
+        a_n : float
+            Adaptive scaling for this n.
+        l : int
+            Lattice-Poisson parameter (paper recommends 1 or 2).
+        gamma : float
+            Accuracy parameter (paper uses 11).
+        use_log : bool
+            If True, returns log(mu_n) instead of mu_n (natural log).
+            Useful if moments are astronomically large.
+
+        Returns
+        -------
+        mu_n or log(mu_n)
+        """
+        if n < 1:
+            raise ValueError("n must be >= 1")
+        if a_n <= 0:
+            raise ValueError("a_n must be positive")
+        if l not in (1, 2):
+            raise ValueError("l should be 1 or 2 (as recommended in the paper)")
+
+        # Radius r_n = 10^{-gamma/(2 n l)} (Eq. (11))
+        r_n = 10.0 ** (-gamma / (2.0 * n * l))
+
+        # Define W_n(z) = M(a_n z)  (Eq. (31))
+        def Wn(z: complex) -> complex:
+            # ---- build NN input ----
+            # create a single (1,d) complex tensor
+            inp = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)
+            # put scaled value on chosen dimension
+            inp[0, dim] = complex(a_n * z)
+            # ---- evaluate NN MGF ----
+            val = self.eval(inp)[0, 0]   # interior MGF
+            # convert tensor -> python complex
+            return complex(val.item())
+
+        # The discrete sum in Eq. (33):
+        # S = Wn(r) + (-1)^n Wn(-r) + 2 * sum_{j=1}^{nl-1} Re( Wn(r e^{i pi j/(n l)}) * e^{-i pi j / l} )
+        nl = n * l
+        r = r_n
+
+        S = Wn(r) + ((-1) ** n) * Wn(-r)
+
+        # Angles: theta_j = pi * j / (n l)
+        # Phase factor: exp(-i * pi * j / l)
+        for j in range(1, nl):
+            theta = math.pi * j / nl
+            z = r * complex(math.cos(theta), math.sin(theta))
+            phase = complex(math.cos(-math.pi * j / l), math.sin(-math.pi * j / l))
+            S += 2.0 * (Wn(z) * phase).real
+
+        # Prefactor: n! / (2 n l r^n a^n)
+        # (Eq. (33), ignoring the discretization-error term)
+        # To improve stability for large n, optionally compute in log-space.
+        if use_log:
+            # log(n!) - log(2 n l) - n log(r) - n log(a) + log(S)
+            # S should be (numerically) real positive for valid MGFs; clip if tiny negative due to roundoff.
+            S_real = float(S.real)
+            if S_real <= 0:
+                raise FloatingPointError(
+                    f"S became non-positive (S={S_real}). "
+                    "This can happen if MGF evaluations are noisy or l/gamma are too aggressive."
+                )
+            log_pref = math.lgamma(n + 1) - math.log(2.0 * n * l) - n * math.log(r) - n * math.log(a_n)
+            return log_pref + math.log(S_real)
+        else:
+            pref = math.factorial(n) / (2.0 * n * l * (r ** n) * (a_n ** n))
+            mu_n = pref * float(S.real)
+            return mu_n
+
+    def moments_from_mgf_singledim(
+        self,
+        N: int,
+        dim: int,
+        l_step2: int = 2,
+        l_step3: int = 2,
+        gamma: float = 11.0,
+        return_log_if_overflow: bool = True,
+    ) -> Tuple[List[float], bool]:
+        """
+        Compute moments mu_1,...,mu_N using Algorithm 3 (Sec. 6.2).
+
+        Returns
+        -------
+        moments : list
+            If return_log_if_overflow=False: [mu_1,...,mu_N]
+            If return_log_if_overflow=True and overflow occurs: returns log(mu_n) instead.
+            (Mixed output is avoided; we switch all outputs to logs once needed.)
+        is_log : bool
+            True if the returned list contains log-moments.
+        """
+        if N < 1:
+            return [], False
+
+        # We'll maintain mu_0 = 1
+        mu: List[float] = [1.0]  # mu[0] = mu_0
+
+        # --- STEP 1: initial computation of mu1 and mu2 ---
+        # Paper sets a1 = 1, and uses a heuristic for a2 based on the initial mu1 (Sec. 6.1-6.2).
+        # We'll do:
+        #   a1 = 1
+        #   compute mu1
+        #   a2 = 1/mu1  (simple scale so that E[a2 X] is ~1)
+        #   compute mu2
+        a1 = 1.0
+        mu1 = self._moment_from_mgf_one_n(1, dim, a1, l=1, gamma=gamma, use_log=False)
+        if mu1 <= 0:
+            raise FloatingPointError("Computed mu1 <= 0; check that M(z) is a valid MGF near 0.")
+        a2 = 1.0 / mu1
+        mu2 = self._moment_from_mgf_one_n(2, dim, a2, l=1, gamma=gamma, use_log=False)
+
+        mu.extend([mu1, mu2])
+
+        # --- STEP 2: recompute mu1 and mu2 to increase accuracy ---
+        # Paper suggests setting a1 = a2 = 2*mu1/mu2 (Sec. 6.2 Step 2).
+        a12 = 2.0 * mu1 / mu2 if mu2 != 0 else 1.0
+        mu1 = self._moment_from_mgf_one_n(1, dim, a12, l=l_step2, gamma=gamma, use_log=False)
+        mu2 = self._moment_from_mgf_one_n(2, dim, a12, l=l_step2, gamma=gamma, use_log=False)
+        mu[1], mu[2] = mu1, mu2
+
+        # Decide whether we need log-moments (optional safety)
+        use_log = False
+
+        # --- STEP 3: compute mu_n for n=3..N ---
+        for n in range(3, N + 1):
+            if not use_log:
+                # a_n = (n-1)*mu_{n-2}/mu_{n-1} (Eq. (29))
+                if mu[n - 1] <= 0:
+                    raise FloatingPointError(f"mu_{n-1} <= 0; cannot form a_n.")
+                a_n = (n - 1.0) * mu[n - 2] / mu[n - 1]
+
+                try:
+                    mu_n = self._moment_from_mgf_one_n(n, dim, a_n, l=l_step3, gamma=gamma, use_log=False)
+                    if not math.isfinite(mu_n) and return_log_if_overflow:
+                        use_log = True
+                except OverflowError:
+                    if return_log_if_overflow:
+                        use_log = True
+                    else:
+                        raise
+
+                if not use_log:
+                    mu.append(mu_n)
+                else:
+                    # Switch everything to log-space retroactively
+                    log_mu = [math.log(x) for x in mu]  # includes mu_0..mu_{n-1}
+                    mu = log_mu
+            if use_log:
+                # Now compute in log-space
+                # a_n = (n-1)*mu_{n-2}/mu_{n-1}  ->  log(a_n) = log(n-1) + log(mu_{n-2}) - log(mu_{n-1})
+                log_a_n = math.log(n - 1.0) + mu[n - 2] - mu[n - 1]
+                a_n = math.exp(log_a_n)
+                log_mu_n = self._moment_from_mgf_one_n(n, dim, a_n, l=l_step3, gamma=gamma, use_log=True)
+                mu.append(log_mu_n)
+
+        # Return mu_1..mu_N (drop mu_0)
+        return mu[1:], use_log
+    
+    def moments_from_mgf(self, N: int):
+        moments = torch.zeros((N, self.d))
+        for d in range(self.d):
+            moments_singledim, use_log = self.moments_from_mgf_singledim(N, d)
+            moments_singledim = torch.tensor(moments_singledim)
+            if use_log:
+                moments_singledim = torch.exp(moments_singledim)
+            moments[:,d] = moments_singledim
+        return moments.tolist()
+
     def eval(self, x):
         x = x.to(device = self.device)
         with torch.no_grad():

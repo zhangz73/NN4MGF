@@ -415,7 +415,7 @@ for i in range(d):
 #first_moment = mgf_trainer.get_first_moment()
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
-moment_N = 4
+moment_N = 5
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
 

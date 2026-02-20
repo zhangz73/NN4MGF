@@ -415,15 +415,19 @@ for i in range(d):
 #first_moment = mgf_trainer.get_first_moment()
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
+
+"""
 moment_N = 5
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
+"""
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 6))
 true_prob_lst = []
 predicted_prob_lst = []
 
+"""
 with open(f"Plots/{scheme}/tables.txt", "w") as file:
     for n in range(moment_N):
         file.write(f"Moment #{n+1}:\n")
@@ -432,7 +436,7 @@ with open(f"Plots/{scheme}/tables.txt", "w") as file:
         pred_moment_lst = predicted_moments[n]
         print_table(file, d_lst, true_moment_lst, pred_moment_lst)
         file.write("\n\n")
-    
+""" 
 for t in tqdm(t_lst):
     ans = tail_prob(t)
     true_prob_lst.append(float(ans))

@@ -799,7 +799,7 @@ class MGFTrainer:
             # oversample to reduce rejection loops
             n_try = int(remaining) #int(remaining * 1.5) + 16
 
-            kappa = self.d / 5
+            kappa = self.d / 20
             real_lb_curr = (ub - lb) * torch.rand(n_try, 1, device=self.device).double() ** (1 / (kappa)) + lb
             real_ub_curr = ub
             imag_bd = max(abs(imag_ub), abs(imag_lb)) * torch.rand(n_try, 1, device=self.device).double()

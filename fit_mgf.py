@@ -301,6 +301,131 @@ class FourierFeatures(nn.Module):
         return torch.cat([per_dim_feats, pair_feats], dim=-1)
 
 class LogGMFNet(nn.Module):
+    def __init__(
+        self,
+        d: int,
+        ff_m: int = 64,
+        dim_embed_dim: int = 32,
+        hidden_dim: int = 128,
+        scale_by_zero: bool = True,
+        x_min: float = -5.0,
+        x_max: float = 0.0,
+        y_min: float = -16.0,
+        y_max: float = 16.0,
+        fmin: float = 1e-2,
+        fmax_x: float = 1.5,
+        fmax_y: float = 2.0,
+        dtype: torch.dtype = torch.float64,
+    ):
+        super().__init__()
+        self.d = d
+        self.scale_by_zero = scale_by_zero
+        self.X_MIN, self.X_MAX = x_min, x_max
+        self.Y_MIN, self.Y_MAX = y_min, y_max
+        self.dtype = dtype
+
+        # Fourier features for ONE coordinate at a time.
+        # We will reuse the same map for every dimension.
+        self.ff = FourierFeatures(
+            d=1,
+            num_features=ff_m,
+            fmin=fmin,
+            fmax_x=fmax_x,
+            fmax_y=fmax_y,
+            use_pairwise=False,
+            dtype=dtype,
+        )
+        coord_feat_dim = self.ff.feat_dim()
+
+        # Learned embedding for dimension index i = 0, ..., d-1
+        self.dim_embedding = nn.Embedding(d, dim_embed_dim)
+
+        # Shared coordinatewise network:
+        # input = [Fourier features of z_i, embedding of dimension i]
+        shared_in_dim = coord_feat_dim + dim_embed_dim
+        self.coord_net = nn.Sequential(
+            nn.Linear(shared_in_dim, hidden_dim, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 2, dtype=dtype),   # per-dim contribution: (Re, Im)
+        )
+
+        # Optional constant bias after aggregation
+        self.bias = nn.Parameter(torch.zeros(1, 2, dtype=dtype))
+
+    def _normalize(self, z: torch.Tensor) -> torch.Tensor:
+        xr = 2.0 * (z.real - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+        yi = 2.0 * (z.imag - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+        return torch.complex(xr, yi)
+
+    def _coordwise_features(self, z_norm: torch.Tensor) -> torch.Tensor:
+        """
+        z_norm: (N, d) complex, already normalized
+        returns: (N, d, coord_feat_dim) real
+        """
+        N, D = z_norm.shape
+        assert D == self.d
+
+        # Flatten all coordinates across the batch, then apply the SAME
+        # 1D Fourier-feature map to each coordinate.
+        z_flat = z_norm.reshape(N * D, 1)      # (N*d, 1) complex
+        feats_flat = self.ff(z_flat)           # (N*d, coord_feat_dim) real
+        feats = feats_flat.reshape(N, D, -1)   # (N, d, coord_feat_dim)
+        return feats
+
+    def _raw_forward_normed(self, z_norm: torch.Tensor) -> torch.Tensor:
+        """
+        z_norm: (N, d) complex, already normalized
+        returns: (N, 1) complex
+        """
+        N, D = z_norm.shape
+        assert D == self.d
+
+        # (1) Fourier features for each dimension
+        coord_feats = self._coordwise_features(z_norm)   # (N, d, coord_feat_dim)
+
+        # (2) Embedding for each dimension index
+        dim_ids = torch.arange(D, device=z_norm.device)              # (d,)
+        dim_emb = self.dim_embedding(dim_ids)                        # (d, dim_embed_dim)
+        dim_emb = dim_emb.to(coord_feats.dtype)                      # match dtype if needed
+        dim_emb = dim_emb.unsqueeze(0).expand(N, -1, -1)             # (N, d, dim_embed_dim)
+
+        # Concatenate [Fourier features, dimension embedding]
+        coord_input = torch.cat([coord_feats, dim_emb], dim=-1)      # (N, d, shared_in_dim)
+
+        # (3) Same decision rule for all dimensions:
+        # self.coord_net is shared and is applied to the last dimension only.
+        coord_out = self.coord_net(coord_input)                      # (N, d, 2)
+
+        # Aggregate across dimensions.
+        # Since coordinates are roughly independent, sum is the natural choice.
+        out = coord_out.sum(dim=1)                                   # (N, 2)
+
+        # Add global bias
+        out = out + self.bias                                        # (N, 2)
+
+        # Convert real pair -> complex
+        out = torch.complex(out[:, 0:1], out[:, 1:2])                # (N, 1)
+        return out
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        z: (N, d) complex in original coordinates
+        returns: (N, 1) complex, approximating log MGF
+        """
+        z_norm = self._normalize(z)
+        raw = self._raw_forward_normed(z_norm)
+
+        if self.scale_by_zero:
+            theta0 = torch.zeros_like(z)
+            z0_norm = self._normalize(theta0)
+            raw0 = self._raw_forward_normed(z0_norm)
+            raw = raw - raw0
+
+        return raw
+
+class LogGMFNet_old(nn.Module):
     """
     Single shared network:
       z (N,d) complex
@@ -387,8 +512,8 @@ class LogGMFNet(nn.Module):
             z0_norm = self._normalize(theta0)
             raw0 = self._raw_forward_normed(z0_norm)
             raw = raw - raw0
-
         return raw
+
 
 class FFNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
@@ -799,7 +924,7 @@ class MGFTrainer:
             # oversample to reduce rejection loops
             n_try = int(remaining) #int(remaining * 1.5) + 16
 
-            kappa = self.d ** 0.5
+            kappa = 1 #self.d ** 0.5
             real_lb_curr = ub - (ub - lb) * torch.rand(n_try, 1, device=self.device).double() ** (kappa)
             real_ub_curr = ub
             imag_bd = max(abs(imag_ub), abs(imag_lb)) * torch.rand(n_try, 1, device=self.device).double()

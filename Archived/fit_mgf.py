@@ -17,6 +17,205 @@ ComplexFn = Callable[[complex], complex]
 
 torch.set_default_dtype(torch.float64)
 
+class HolomorphicLinearOld(nn.Module):
+    def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
+        super().__init__()
+        denom = max(in_features, 1)
+        scale = (1 / denom) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(denom))) #0.01
+        scale *= 0.1 #0.01
+        self.weight = nn.Parameter(
+            torch.empty(out_features, in_features, dtype=torch.cdouble).uniform_(-scale, scale)
+        )
+        self.bias = nn.Parameter(
+            torch.empty(out_features, dtype=torch.cdouble).uniform_(-scale, scale)
+        ) #nn.Parameter(torch.zeros(out_features, dtype=torch.cdouble))
+
+    def forward(self, z):
+        return torch.nn.functional.linear(z, self.weight, self.bias)
+
+class HolomorphicLinear(nn.Module):
+    def __init__(self, in_features, out_features, omega_0=1.0, is_first=False):
+        super().__init__()
+
+        denom = max(in_features, 1)
+        scale = (1 / denom) if is_first else (np.sqrt(6) / (omega_0 * np.sqrt(denom)))
+        scale *= 0.01
+
+        # Real and imaginary parts of weight
+        self.Wr = nn.Parameter(
+            torch.empty(out_features, in_features).uniform_(-scale, scale)
+        )
+        self.Wi = nn.Parameter(
+            torch.empty(out_features, in_features).uniform_(-scale, scale)
+        )
+
+        # Real and imaginary parts of bias
+        self.br = nn.Parameter(
+            torch.empty(out_features).uniform_(-scale, scale)
+        )
+        self.bi = nn.Parameter(
+            torch.empty(out_features).uniform_(-scale, scale)
+        )
+
+    def forward(self, z):
+        """
+        z: complex tensor of shape (..., in_features)
+        """
+        zr = z.real
+        zi = z.imag
+
+        real = zr @ self.Wr.T - zi @ self.Wi.T + self.br
+        imag = zr @ self.Wi.T + zi @ self.Wr.T + self.bi
+#        real = zr @ self.Wr.T + self.br
+#        imag = zr @ self.Wi.T + self.bi
+
+        return torch.complex(real, imag)
+
+class NormalizeComplex(nn.Module):
+    def __init__(self, max_mag=3.0, eps=1e-8):
+        super().__init__()
+        self.max_mag = max_mag
+        self.eps = eps
+
+    def forward(self, z):
+        mag = torch.abs(z)
+        scale = torch.clamp(self.max_mag / (mag + self.eps), max=1.0)
+        return z * scale
+
+class ComplexExpGate(nn.Module):
+    def __init__(self, alpha=0.1):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.tensor(alpha, dtype=torch.double))
+
+    def forward(self, z):
+        return z * torch.exp(self.alpha * z)
+
+class PolyResidualBlock(nn.Module):
+    """
+    Holomorphic multivariate polynomial residual block:
+        z -> z + A z + sum_{i,j} B_{ij} z_i z_j
+    """
+    def __init__(self, d):
+        super().__init__()
+        self.d = d
+        scale = 0.1
+        # Linear perturbation
+        self.A = nn.Parameter(
+            torch.randn(d, d, dtype=torch.cdouble) * scale
+        )
+        # Quadratic cross terms
+        self.B = nn.Parameter(
+            torch.randn(d, d, d, dtype=torch.cdouble) * scale
+        )
+
+    def forward(self, z):
+        # z: (batch, d)
+        linear = z @ self.A.T                      # (batch, d)
+        # quadratic: sum_jk B[i,j,k] z_j z_k
+        quad = torch.einsum("bij,jk->bi", self.B, torch.einsum("bj,bk->jk", z, z))
+        return z + linear + quad
+
+class CauchyActivation(nn.Module):
+    def __init__(self, eps=1e-12):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, z):
+        return 1.0 / (1.0 + z * z + self.eps)
+
+class BoundedHolomorphicActivation(nn.Module):
+    def forward(self, z):
+        # entire + bounded in imaginary direction
+        return z / (1 + z*z)
+
+class NormalizeActivation(nn.Module):
+    def __init__(self, eps=1e-9):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, z):
+        mag = torch.abs(z)
+        return z / (1.0 + mag + self.eps)
+
+class ComplexSine(nn.Module):
+    def __init__(self, omega_0=1.0):
+        super().__init__()
+        self.omega_0 = omega_0
+
+    def forward(self, z):
+        return torch.sin(self.omega_0 * z)
+
+class MGFFeatures(nn.Module):
+    """
+    MGF-specific feature map for complex inputs s = x + i y.
+
+    Produces features that respect:
+    - exponential growth in Re(s)
+    - oscillation in Im(s)
+    - analyticity (CR-friendly)
+    """
+
+    def __init__(
+        self,
+        d,
+        num_imag_freqs=16,
+        exp_scales=(0.5, 1.0),
+        poly_degree=3,
+    ):
+        """
+        d: dimension of input (number of s_i's)
+        num_imag_freqs: number of Fourier frequencies for Im(s)
+        exp_scales: scales for exp(alpha * Re(s))
+        poly_degree: max polynomial degree in Re(s)
+        """
+        super().__init__()
+        self.d = d
+        self.num_imag_freqs = num_imag_freqs
+        self.poly_degree = poly_degree
+
+        # Imaginary frequencies (shared across dimensions)
+        freqs = torch.logspace(0, 1, num_imag_freqs)
+        self.register_buffer("imag_freqs", freqs.view(1, 1, -1))
+
+        # Exponential scales
+        self.exp_scales = exp_scales
+
+        # Feature count per dimension
+        self.per_dim_features = (
+            poly_degree               # x, x^2, ..., x^p
+            + len(exp_scales)         # exp(alpha x)
+            + 2 * num_imag_freqs      # cos + sin
+        )
+
+    def forward(self, s):
+        """
+        s: complex tensor of shape (N, d)
+        returns: real tensor of shape (N, d * per_dim_features)
+        """
+        x = s.real.unsqueeze(-1)  # (N, d, 1)
+        y = s.imag.unsqueeze(-1)  # (N, d, 1)
+
+        feats = []
+
+        # ---- Real-axis polynomial features ----
+        for k in range(1, self.poly_degree + 1):
+            feats.append(k * torch.log(x))
+
+        # ---- Real-axis exponential features ----
+        for alpha in self.exp_scales:
+            feats.append(alpha * x)
+
+        # ---- Imaginary-axis Fourier features ----
+        yb = y * self.imag_freqs  # (N, d, F)
+        feats.append(torch.cos(yb))
+        feats.append(torch.sin(yb))
+
+        # Concatenate along last axis
+        feats = torch.cat(feats, dim=-1)  # (N, d, per_dim_features)
+
+        # Flatten per dimension
+        return feats.view(s.shape[0], -1)
+
 class FourierFeatures(nn.Module):
     """
     Fourier features for complex input z \in C^{d} (shape: (N,d)).
@@ -116,8 +315,6 @@ class LogGMFNet(nn.Module):
         fmin: float = 1e-2,
         fmax_x: float = 1.5,
         fmax_y: float = 2.0,
-        use_boundary_embed: bool = False,
-        boundary_embed_dim: int = 32,
         dtype: torch.dtype = torch.float64,
     ):
         super().__init__()
@@ -125,10 +322,10 @@ class LogGMFNet(nn.Module):
         self.scale_by_zero = scale_by_zero
         self.X_MIN, self.X_MAX = x_min, x_max
         self.Y_MIN, self.Y_MAX = y_min, y_max
-        self.use_boundary_embed = use_boundary_embed
         self.dtype = dtype
 
-        # Shared 1D Fourier feature map
+        # Fourier features for ONE coordinate at a time.
+        # We will reuse the same map for every dimension.
         self.ff = FourierFeatures(
             d=1,
             num_features=ff_m,
@@ -140,27 +337,21 @@ class LogGMFNet(nn.Module):
         )
         coord_feat_dim = self.ff.feat_dim()
 
-        # Coordinate-index embedding inside the reduced/input dimension
+        # Learned embedding for dimension index i = 0, ..., d-1
         self.dim_embedding = nn.Embedding(d, dim_embed_dim)
 
-        # Boundary-index embedding: which boundary function are we learning?
-        # For the boundary network used inside MGFNet, the boundary index ranges over {0, ..., d}
-        # where original full dimension is (self.d + 1), so allocating self.d + 1 is right.
-        if self.use_boundary_embed:
-            self.boundary_embedding = nn.Embedding(d + 1, boundary_embed_dim)
-
+        # Shared coordinatewise network:
+        # input = [Fourier features of z_i, embedding of dimension i]
         shared_in_dim = coord_feat_dim + dim_embed_dim
-        if self.use_boundary_embed:
-            shared_in_dim += boundary_embed_dim
-
         self.coord_net = nn.Sequential(
             nn.Linear(shared_in_dim, hidden_dim, dtype=dtype),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim, dtype=dtype),
             nn.SiLU(),
-            nn.Linear(hidden_dim, 2, dtype=dtype),   # per-coordinate contribution: (Re, Im)
+            nn.Linear(hidden_dim, 2, dtype=dtype),   # per-dim contribution: (Re, Im)
         )
 
+        # Optional constant bias after aggregation
         self.bias = nn.Parameter(torch.zeros(1, 2, dtype=dtype))
 
     def _normalize(self, z: torch.Tensor) -> torch.Tensor:
@@ -176,156 +367,371 @@ class LogGMFNet(nn.Module):
         N, D = z_norm.shape
         assert D == self.d
 
+        # Flatten all coordinates across the batch, then apply the SAME
+        # 1D Fourier-feature map to each coordinate.
         z_flat = z_norm.reshape(N * D, 1)      # (N*d, 1) complex
         feats_flat = self.ff(z_flat)           # (N*d, coord_feat_dim) real
         feats = feats_flat.reshape(N, D, -1)   # (N, d, coord_feat_dim)
         return feats
 
-    def _raw_forward_normed(self, z_norm: torch.Tensor, idx=None) -> torch.Tensor:
+    def _raw_forward_normed(self, z_norm: torch.Tensor) -> torch.Tensor:
         """
         z_norm: (N, d) complex, already normalized
-        idx:
-            - None if no boundary embedding is used
-            - int / 0-d tensor / shape-(N,) tensor boundary indices if boundary embedding is used
         returns: (N, 1) complex
         """
         N, D = z_norm.shape
         assert D == self.d
 
-        # (1) Fourier features for each coordinate
+        # (1) Fourier features for each dimension
         coord_feats = self._coordwise_features(z_norm)   # (N, d, coord_feat_dim)
 
-        # (2) Embedding for coordinate index within the current input
-        dim_ids = torch.arange(D, device=z_norm.device)                  # (d,)
-        dim_emb = self.dim_embedding(dim_ids)                            # (d, dim_embed_dim)
-        dim_emb = dim_emb.to(coord_feats.dtype)
-        dim_emb = dim_emb.unsqueeze(0).expand(N, -1, -1)                 # (N, d, dim_embed_dim)
+        # (2) Embedding for each dimension index
+        dim_ids = torch.arange(D, device=z_norm.device)              # (d,)
+        dim_emb = self.dim_embedding(dim_ids)                        # (d, dim_embed_dim)
+        dim_emb = dim_emb.to(coord_feats.dtype)                      # match dtype if needed
+        dim_emb = dim_emb.unsqueeze(0).expand(N, -1, -1)             # (N, d, dim_embed_dim)
 
-        pieces = [coord_feats, dim_emb]
+        # Concatenate [Fourier features, dimension embedding]
+        coord_input = torch.cat([coord_feats, dim_emb], dim=-1)      # (N, d, shared_in_dim)
 
-        # (3) Optional boundary-id embedding: same boundary-id attached to every coordinate
-        if self.use_boundary_embed:
-            if idx is None:
-                raise ValueError("idx must be provided when use_boundary_embed=True")
+        # (3) Same decision rule for all dimensions:
+        # self.coord_net is shared and is applied to the last dimension only.
+        coord_out = self.coord_net(coord_input)                      # (N, d, 2)
 
-            if not torch.is_tensor(idx):
-                idx = torch.full((N,), int(idx), device=z_norm.device, dtype=torch.long)
-            else:
-                idx = idx.to(device=z_norm.device, dtype=torch.long)
-                if idx.ndim == 0:
-                    idx = idx.expand(N)
-                elif idx.ndim == 1:
-                    if idx.shape[0] != N:
-                        raise ValueError(f"idx has shape {idx.shape}, expected ({N},)")
-                else:
-                    raise ValueError("idx must be a scalar or a 1D tensor")
+        # Aggregate across dimensions.
+        # Since coordinates are roughly independent, sum is the natural choice.
+        out = coord_out.sum(dim=1)                                   # (N, 2)
 
-            boundary_emb = self.boundary_embedding(idx)                  # (N, boundary_embed_dim)
-            boundary_emb = boundary_emb.to(coord_feats.dtype)
-            boundary_emb = boundary_emb.unsqueeze(1).expand(-1, D, -1)   # (N, d, boundary_embed_dim)
-            pieces.append(boundary_emb)
+        # Add global bias
+        out = out + self.bias                                        # (N, 2)
 
-        coord_input = torch.cat(pieces, dim=-1)                          # (N, d, shared_in_dim)
-
-        # Shared decision rule across all coordinates
-        coord_out = self.coord_net(coord_input)                          # (N, d, 2)
-
-        # Additive aggregation
-        out = coord_out.sum(dim=1)                                       # (N, 2)
-        out = out + self.bias                                            # (N, 2)
-
-        out = torch.complex(out[:, 0:1], out[:, 1:2])                    # (N, 1)
+        # Convert real pair -> complex
+        out = torch.complex(out[:, 0:1], out[:, 1:2])                # (N, 1)
         return out
 
-    def forward(self, z: torch.Tensor, idx=None) -> torch.Tensor:
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
         z: (N, d) complex in original coordinates
-        idx: boundary index information if use_boundary_embed=True
-        returns: (N, 1) complex
+        returns: (N, 1) complex, approximating log MGF
         """
         z_norm = self._normalize(z)
-        raw = self._raw_forward_normed(z_norm, idx)
+        raw = self._raw_forward_normed(z_norm)
 
         if self.scale_by_zero:
             theta0 = torch.zeros_like(z)
             z0_norm = self._normalize(theta0)
-            raw0 = self._raw_forward_normed(z0_norm, idx)
+            raw0 = self._raw_forward_normed(z0_norm)
             raw = raw - raw0
 
         return raw
 
+class LogGMFNet_old(nn.Module):
+    """
+    Single shared network:
+      z (N,d) complex
+        -> normalize to z_norm in [-1,1]^d + i[-1,1]^d
+        -> FourierFeatures(d, ...) : R^{feat_dim}
+        -> MLP : R^2
+        -> complex log-MGF (N,1)
+      Optional anchoring: subtract value at theta=0 so that log phi(0)=0.
+    """
+    def __init__(
+        self,
+        d: int,
+        ff_m: int = 64,
+        hidden_dim: int = 128,
+        scale_by_zero: bool = True,
+        x_min: float = -5.0,
+        x_max: float = 0.0,
+        y_min: float = -16.0,
+        y_max: float = 16.0,
+        fmin: float = 1e-2,
+        fmax_x: float = 1.5,
+        fmax_y: float = 2.0,
+        use_pairwise: bool = False,
+        dtype: torch.dtype = torch.float64,
+    ):
+        super().__init__()
+        self.d = d
+        self.scale_by_zero = scale_by_zero
+        self.X_MIN, self.X_MAX = x_min, x_max
+        self.Y_MIN, self.Y_MAX = y_min, y_max
 
+        # Joint Fourier features on all dims
+        self.ff = FourierFeatures(
+            d=d,
+            num_features=ff_m,
+            fmin=fmin,
+            fmax_x=fmax_x,
+            fmax_y=fmax_y,
+            use_pairwise=use_pairwise,
+            dtype=dtype,
+        )
+        in_dim = self.ff.feat_dim()
+
+        # Single shared MLP after Fourier features
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 2),  # (Re log phi, Im log phi)
+        )
+
+        # Optional constant log term; you can remove this if you always anchor.
+        self.bias = nn.Parameter(torch.zeros(1, 2, dtype=dtype))
+
+    def _normalize(self, z: torch.Tensor) -> torch.Tensor:
+        xr = 2.0 * (z.real - self.X_MIN) / (self.X_MAX - self.X_MIN) - 1.0
+        yi = 2.0 * (z.imag - self.Y_MIN) / (self.Y_MAX - self.Y_MIN) - 1.0
+        return torch.complex(xr, yi)
+
+    def _raw_forward_normed(self, z_norm: torch.Tensor) -> torch.Tensor:
+        """
+        z_norm: (N,d) complex, already normalized.
+        returns: (N,1) complex
+        """
+        feats = self.ff(z_norm)                 # (N, feat_dim) real
+        out = self.net(feats)                   # (N, 2) real
+        out = torch.complex(out[:, 0:1], out[:, 1:2])  # (N,1) complex
+        bias = torch.complex(self.bias[:, 0:1], self.bias[:, 1:2])  # (1,1)
+        return out + bias
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        z: (N,d) complex in original coordinates
+        returns: (N,1) complex, approximating log MGF
+        """
+        z_norm = self._normalize(z)
+        raw = self._raw_forward_normed(z_norm)
+
+        if self.scale_by_zero:
+            # evaluate at theta=0 (in original coords), then subtract
+            # Note: normalization(0) is generally NOT 0 unless the box is centered at 0.
+            theta0 = torch.zeros_like(z)  # (N,d) complex zeros in original coords
+            z0_norm = self._normalize(theta0)
+            raw0 = self._raw_forward_normed(z0_norm)
+            raw = raw - raw0
+        return raw
+
+
+class FFNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(FFNet, self).__init__()
+        self.network = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            nn.Tanh(),
+            HolomorphicLinear(hidden_dim, 64, omega_0),
+            nn.Tanh(),
+            HolomorphicLinear(64, 64, omega_0),
+            nn.Tanh(),
+            HolomorphicLinear(64, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class RealFFNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, scale_by_zero = False):
+        super(FFNet, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim, is_first = True),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, output_dim),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class PolyResNet(nn.Module):
+    """
+    Multivariate holomorphic polynomial residual network
+    with optional scale_by_zero normalization.
+    """
+    def __init__(self, input_dim, depth=4, scale_by_zero=False):
+        super().__init__()
+        self.input_dim = input_dim
+        self.scale_by_zero = scale_by_zero
+
+        self.blocks = nn.ModuleList(
+            [PolyResidualBlock(input_dim) for _ in range(depth)]
+        )
+
+        # Final holomorphic projection to scalar log-MGF
+        self.c = nn.Parameter(
+            torch.randn(input_dim, 1, dtype=torch.cdouble) * 0.1
+        )
+
+    def core(self, theta):
+        """
+        Core holomorphic map producing log-MGF (unnormalized).
+        """
+        z = theta
+        for block in self.blocks:
+            z = block(z)
+        return z @ self.c   # (batch, 1)
+
+    def forward(self, theta):
+        """
+        Returns MGF(theta), not log-MGF.
+        """
+        if self.input_dim == 0:
+            return torch.ones(theta.shape[0], 1, dtype=torch.cdouble)
+            
+        raw = self.core(theta)
+
+        if self.scale_by_zero:
+            zero_point = torch.zeros(
+                1, self.input_dim, dtype=torch.cdouble, device=theta.device
+            )
+            raw0 = self.core(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+
+        return output
+
+class BoundedNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(BoundedNet, self).__init__()
+        self.network = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            BoundedHolomorphicActivation(),
+            HolomorphicLinear(hidden_dim, 64, omega_0),
+            BoundedHolomorphicActivation(),
+            HolomorphicLinear(64, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+
+class SirenNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(SirenNet, self).__init__()
+        self.C = 3
+        self.hf_net = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            NormalizeComplex(3.0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(hidden_dim, 64, omega_0, is_first = False),
+            NormalizeComplex(3.0),
+            ComplexSine(omega_0),
+            HolomorphicLinear(64, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.hf_net(x)
+        if self.scale_by_zero:
+            zero = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device=x.device)
+            raw0 = self.hf_net(zero)
+            return torch.exp(raw - raw0)
+        return torch.exp(raw)
+
+class LinearNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim = 64, omega_0 = 5.0, scale_by_zero = False):
+        super(LinearNet, self).__init__()
+        self.network = nn.Sequential(
+            HolomorphicLinear(input_dim, hidden_dim, omega_0, is_first = True),
+            HolomorphicLinear(hidden_dim, output_dim, omega_0),
+        )
+        self.scale_by_zero = scale_by_zero
+
+    def forward(self, x):
+        raw = self.network(x)
+        # Combine into a complex-valued "raw" network output
+        if self.scale_by_zero:
+            zero_point = torch.zeros(1, x.shape[1], dtype=torch.cdouble, device = raw.device)
+            raw0 = self.network(zero_point)
+            output = torch.exp(raw - raw0)
+        else:
+            output = torch.exp(raw)
+        return output
+    
 class MGFNet(nn.Module):
-    def __init__(self, d, hidden_dim=64, x_min=-3, x_max=-0.5, y_min=-16, y_max=0):
+    def __init__(self, d, hidden_dim = 64, x_min = -3, x_max = -0.5, y_min = -16, y_max = 0):
         super(MGFNet, self).__init__()
         self.d = d
+        omega_0 = 1.0
+#        self.interior_network = FFNet(self.d, 1, hidden_dim = hidden_dim, omega_0 = omega_0, scale_by_zero = True)
+        self.interior_network = LogGMFNet(self.d, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = True, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max) #PolyResNet(self.d, depth = 1, scale_by_zero = True)
+        self.boundary_networks = nn.ModuleList()
+        for i in range(self.d):
+            self.boundary_networks.append(LogGMFNet(self.d - 1, ff_m = 64, hidden_dim = hidden_dim, scale_by_zero = False, x_min = x_min, x_max = x_max, y_min = y_min, y_max = y_max))
+#            self.boundary_networks.append(FFNet(self.d-1, 1, hidden_dim = hidden_dim, omega_0 = omega_0))
 
-        self.interior_network = LogGMFNet(
-            self.d,
-            ff_m=64,
-            hidden_dim=hidden_dim,
-            scale_by_zero=True,
-            x_min=x_min,
-            x_max=x_max,
-            y_min=y_min,
-            y_max=y_max,
-        )
-
-        self.boundary_network = LogGMFNet(
-            self.d - 1,
-            ff_m=64,
-            hidden_dim=hidden_dim,
-            scale_by_zero=False,
-            x_min=x_min,
-            x_max=x_max,
-            y_min=y_min,
-            y_max=y_max,
-            use_boundary_embed=True,
-        )
-
-    def forward(self, x, subset=None):
-        """
-        x: (N, d) complex
-        returns: (N, d+1) complex = [interior, boundary_0, ..., boundary_{d-1}]
-        """
-        N, D = x.shape
-        assert D == self.d
-
-        phi = self.interior_network(x)   # (N, 1)
-
-        phi_i = torch.zeros((N, self.d), dtype=phi.dtype, device=phi.device)
-
+    def forward(self, x, subset = None):
+        phi = self.interior_network(x)
+        phi_i = torch.zeros((x.shape[0], self.d), dtype=torch.cdouble, device = phi.device)
         if subset is None:
-            subset = torch.arange(self.d, device=x.device, dtype=torch.long)
-        else:
-            subset = torch.as_tensor(subset, device=x.device, dtype=torch.long)
-
-        if subset.numel() == 0:
-            return torch.cat([phi, phi_i], dim=1)
-
-        k = subset.numel()
-
-        # Build all reduced inputs x without coordinate i, for all i in subset, at once.
-        # mask shape: (k, d), where row r keeps all columns except subset[r]
-        mask = torch.ones((k, self.d), dtype=torch.bool, device=x.device)
-        mask[torch.arange(k, device=x.device), subset] = False
-
-        # Expand x to (N, k, d), then boolean-select to (N, k*(d-1)), then reshape.
-        x_expanded = x.unsqueeze(1).expand(N, k, self.d)                         # (N, k, d)
-        reduced_inputs = x_expanded[mask.unsqueeze(0).expand(N, -1, -1)]         # (N * k * (d-1),)
-        reduced_inputs = reduced_inputs.reshape(N, k, self.d - 1)                # (N, k, d-1)
-
-        # Flatten batch and boundary axes so boundary_network sees one big batch
-        boundary_x = reduced_inputs.reshape(N * k, self.d - 1)                   # (N*k, d-1)
-
-        # Boundary indices repeated for each sample in batch
-        boundary_idx = subset.unsqueeze(0).expand(N, -1).reshape(N * k)          # (N*k,)
-
-        boundary_phi = self.boundary_network(boundary_x, boundary_idx)            # (N*k, 1)
-        boundary_phi = boundary_phi.reshape(N, k)                                 # (N, k)
-
-        phi_i[:, subset] = boundary_phi
-        return torch.cat([phi, phi_i], dim=1)
+            subset = list(range(self.d))
+        for i in subset:
+            input_i = torch.concat([x[:,:i], x[:,(i+1):]], dim = 1)
+            phi_i[:,i] = self.boundary_networks[i](input_i).flatten()
+        return torch.concat([phi, phi_i], dim = 1)
+    
+    def freeze_all(self):
+        self.freeze_interior()
+        self.freeze_boundary()
+    
+    def unfreeze_all(self):
+        self.unfreeze_interior()
+        self.unfreeze_boundary()
+    
+    def freeze_interior(self):
+        for param in self.interior_network.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_interior(self):
+        for param in self.interior_network.parameters():
+            param.requires_grad = True
+    
+    def freeze_boundary(self):
+        for param in self.boundary_networks.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_boundary(self):
+        for param in self.boundary_networks.parameters():
+            param.requires_grad = True
+    
+    def freeze_boundary_i(self, i):
+        for param in self.boundary_networks[i].parameters():
+            param.requires_grad = False
+    
+    def unfreeze_boundary_i(self, i):
+        for param in self.boundary_networks[i].parameters():
+            param.requires_grad = True
 
 class MGFTrainer:
     def __init__(self, d, mu, sigma, R, hidden_dim = 128, dir = ".", x_min = -3, x_max = -0.5, y_min = -16, y_max = 0):
@@ -380,7 +786,7 @@ class MGFTrainer:
             x_sub = torch.cat([s.real[:, :i], s.real[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, torch.zeros_like(x_sub))
 
-            logM_bi = model.boundary_network(z_sub, i).view(-1, 1)  # (N,1) complex
+            logM_bi = model.boundary_networks[i](z_sub).view(-1, 1)  # (N,1) complex
 
             grad_bi = torch.autograd.grad(logM_bi.real.sum(), x_sub, create_graph=True)[0]  # (N,d-1)
             mono_b = mono_b + torch.relu(-grad_bi).mean()
@@ -429,7 +835,7 @@ class MGFTrainer:
             y_sub = torch.cat([z.imag[:, :i], z.imag[:, i+1:]], dim=1).clone().detach().requires_grad_(True)
             z_sub = torch.complex(x_sub, y_sub)
 
-            f = model.boundary_network(z_sub, i)  # should output complex (N,1) or (N,)
+            f = model.boundary_networks[i](z_sub)  # should output complex (N,1) or (N,)
             f = f.view(-1, 1)
 
             u, v = f.real, f.imag

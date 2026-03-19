@@ -373,7 +373,7 @@ if RETRAIN:
     lam_growth = 0
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
-    batch_size = 8192 #4096 #8192#16384
+    batch_size = 16384 #4096 #8192#16384
     max_grad_sample = 512
     max_boundary_grad_sample = 64
     train_freq = 1

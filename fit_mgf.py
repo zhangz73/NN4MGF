@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.quasirandom import SobolEngine
@@ -254,7 +255,6 @@ class LogGMFNet(nn.Module):
 
         return raw
 
-
 class MGFNet(nn.Module):
     def __init__(self, d, hidden_dim=64, x_min=-3, x_max=-0.5, y_min=-16, y_max=0):
         super(MGFNet, self).__init__()
@@ -268,7 +268,7 @@ class MGFNet(nn.Module):
             x_min=x_min,
             x_max=x_max,
             y_min=y_min,
-            y_max=y_max,
+            y_max=y_max
         )
 
         self.boundary_network = LogGMFNet(
@@ -280,7 +280,7 @@ class MGFNet(nn.Module):
             x_max=x_max,
             y_min=y_min,
             y_max=y_max,
-            use_boundary_embed=True,
+            use_boundary_embed=True
         )
 
     def forward(self, x, subset=None):
@@ -453,8 +453,11 @@ class MGFTrainer:
         d = theta.shape[1]
         loss = 0.0
 
+        max_sample = int(theta.shape[0] / d)
+
         for i in range(d):
             theta_clamp = theta.clone()
+            theta_clamp = theta_clamp[torch.randperm(theta_clamp.size(0), device=theta.device)[:max_sample]]
             ## TODO: Note that the theta_clamp only supports R such that R[i,i] = 1 and R[i,i-1] = -1
             theta_clamp[:, 0:(i+1)] = theta_clamp[:,0:1]
             theta_clamp[:, (i+1):] = 0

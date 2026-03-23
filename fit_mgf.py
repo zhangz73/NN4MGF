@@ -262,7 +262,7 @@ class MGFNet(nn.Module):
 
         self.interior_network = LogGMFNet(
             self.d,
-            ff_m=64,
+            ff_m=32,
             hidden_dim=hidden_dim,
             scale_by_zero=True,
             x_min=x_min,
@@ -273,7 +273,7 @@ class MGFNet(nn.Module):
 
         self.boundary_network = LogGMFNet(
             self.d - 1,
-            ff_m=64,
+            ff_m=32,
             hidden_dim=hidden_dim,
             scale_by_zero=False,
             x_min=x_min,

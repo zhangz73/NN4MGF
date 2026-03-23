@@ -16,7 +16,7 @@ from typing import Callable
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
-d = 40 #20
+d = 20#40 #20
 TRAIN_LB = -5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -5
@@ -421,7 +421,7 @@ predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
 
 ## Comparing Tail probability of X1 + X2 against ground truth
-t_lst = list(range(1, 6))
+t_lst = list(range(1, 11)) #list(range(1, 6))
 true_prob_lst = []
 predicted_prob_lst = []
 

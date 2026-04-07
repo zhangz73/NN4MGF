@@ -16,7 +16,7 @@ from typing import Callable
 from fit_mgf import MGFTrainer
 from inverse_laplace import InverseLaplace
 
-d = 20#40 #20
+d = 10#30 #20
 TRAIN_LB = -5
 TRAIN_UB = 0.5
 TRAIN_IMAG_LB = -5
@@ -341,7 +341,7 @@ excluded_boxes = []
 #for real_pole in set(alpha):
 #    excluded_boxes.append((float(real_pole) - 1, float(real_pole) + 1, -1, 1))
 
-mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
+mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 64, dir = f"{scheme}", x_min = TRAIN_LB, x_max = TRAIN_UB, y_min = TRAIN_IMAG_LB, y_max = TRAIN_IMAG_UB)
 
 ## Generate evaluation data
 if False: #d == 2:
@@ -357,9 +357,9 @@ if RETRAIN:
     anchor_set = None
     joint_rounds = [
         # Warm-up / coarse fit
-        dict(epochs=400000, lr=1e-3, T0=400000, eta_min=1e-4),
+        dict(epochs=100000, lr=1e-3, T0=100000, eta_min=1e-4),
         # Refine BAR fit
-        dict(epochs=400000, lr=1e-4, T0=400000, eta_min=1e-5),
+        #dict(epochs=400000, lr=1e-4, T0=400000, eta_min=1e-5),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -374,8 +374,8 @@ if RETRAIN:
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
     batch_size = 16384 #4096 #8192#16384
-    max_grad_sample = 1024
-    max_boundary_grad_sample = 128
+    max_grad_sample = 128#1024
+    max_boundary_grad_sample = 16#128
     train_freq = 1
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
@@ -415,17 +415,18 @@ for i in range(d):
 #first_moment = mgf_trainer.get_first_moment()
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
-
+"""
 moment_N = 3
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
+"""
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 11)) #list(range(1, 6))
 true_prob_lst = []
 predicted_prob_lst = []
 
-
+"""
 with open(f"Plots/{scheme}/tables.txt", "w") as file:
     for n in range(moment_N):
         file.write(f"Moment #{n+1}:\n")
@@ -434,7 +435,8 @@ with open(f"Plots/{scheme}/tables.txt", "w") as file:
         pred_moment_lst = predicted_moments[n]
         print_table(file, d_lst, true_moment_lst, pred_moment_lst)
         file.write("\n\n")
- 
+"""
+
 for t in tqdm(t_lst):
     ans = tail_prob(t)
     true_prob_lst.append(float(ans))

@@ -106,7 +106,7 @@ class LogGMFNet(nn.Module):
     def __init__(
         self,
         d: int,
-        ff_m: int = 64,
+        ff_m: int = 32,
         dim_embed_dim: int = 32,
         hidden_dim: int = 128,
         scale_by_zero: bool = True,
@@ -283,6 +283,16 @@ class MGFNet(nn.Module):
             use_boundary_embed=True
         )
 
+        # retain_idx[i] = original column indices kept after deleting column i
+        retain_idx = []
+        for i in range(d):
+            keep = torch.cat([
+                torch.arange(i, dtype=torch.long),
+                torch.arange(i + 1, d, dtype=torch.long)
+            ])
+            retain_idx.append(keep)
+        self.register_buffer("retain_idx", torch.stack(retain_idx, dim=0))  # (d, d-1)
+
     def forward(self, x, subset=None):
         """
         x: (N, d) complex
@@ -303,28 +313,27 @@ class MGFNet(nn.Module):
         if subset.numel() == 0:
             return torch.cat([phi, phi_i], dim=1)
 
-        k = subset.numel()
+        # Process one boundary at a time to avoid materializing large intermediate tensors
+        for i in subset:
+            i_int = int(i.item())
 
-        # Build all reduced inputs x without coordinate i, for all i in subset, at once.
-        # mask shape: (k, d), where row r keeps all columns except subset[r]
-        mask = torch.ones((k, self.d), dtype=torch.bool, device=x.device)
-        mask[torch.arange(k, device=x.device), subset] = False
+            # Remove coordinate i_int: shape (N, d-1)
+            reduced_x = torch.cat([x[:, :i_int], x[:, i_int + 1:]], dim=1)
 
-        # Expand x to (N, k, d), then boolean-select to (N, k*(d-1)), then reshape.
-        x_expanded = x.unsqueeze(1).expand(N, k, self.d)                         # (N, k, d)
-        reduced_inputs = x_expanded[mask.unsqueeze(0).expand(N, -1, -1)]         # (N * k * (d-1),)
-        reduced_inputs = reduced_inputs.reshape(N, k, self.d - 1)                # (N, k, d-1)
+            # boundary_network expects a boundary index for each sample: shape (N,)
+            boundary_idx = torch.full(
+                (N,),
+                i_int,
+                dtype=torch.long,
+                device=x.device
+            )
 
-        # Flatten batch and boundary axes so boundary_network sees one big batch
-        boundary_x = reduced_inputs.reshape(N * k, self.d - 1)                   # (N*k, d-1)
+            # Output shape: (N, 1)
+            boundary_phi = self.boundary_network(reduced_x, boundary_idx)
 
-        # Boundary indices repeated for each sample in batch
-        boundary_idx = subset.unsqueeze(0).expand(N, -1).reshape(N * k)          # (N*k,)
+            # Store into the corresponding column
+            phi_i[:, i_int] = boundary_phi.squeeze(1)
 
-        boundary_phi = self.boundary_network(boundary_x, boundary_idx)            # (N*k, 1)
-        boundary_phi = boundary_phi.reshape(N, k)                                 # (N, k)
-
-        phi_i[:, subset] = boundary_phi
         return torch.cat([phi, phi_i], dim=1)
 
 class MGFTrainer:
@@ -453,7 +462,7 @@ class MGFTrainer:
         d = theta.shape[1]
         loss = 0.0
 
-        max_sample = int(theta.shape[0] / d)
+        max_sample = int(theta.shape[0] / 50)
 
         for i in range(d):
             theta_clamp = theta.clone()
@@ -815,15 +824,20 @@ class MGFTrainer:
                     if anchor_set is not None and not full_gradient:
                         theta = torch.cat([theta, anchor_set], dim = 0)
 
+                    #print("before model", torch.cuda.memory_allocated() / 1024**3)
                     output = self.model(theta)
+                    #print("after model", torch.cuda.memory_allocated() / 1024**3)
                     log_phi_theta = output[:, 0:1]
                     log_phi_i_theta = output[:, 1:]
                     phi_theta = torch.exp(log_phi_theta)
                     phi_i_theta = torch.exp(log_phi_i_theta)
 
                     # BAR loss in log space
+                    #print("before bar loss", torch.cuda.memory_allocated() / 1024**3)
                     bar_mse = self.bar_loss(theta, phi_theta, phi_i_theta)
+                    #print("before bar loss norm", torch.cuda.memory_allocated() / 1024**3)
                     bar_mse_norm = self.bar_loss_normalized(theta, log_phi_theta, log_phi_i_theta)
+                    #print("before log bar loss", torch.cuda.memory_allocated() / 1024**3)
                     log_bar_mse = self.log_bar_loss(theta, log_phi_theta, log_phi_i_theta, train_idx = 0)
 
                     s0 = torch.zeros((1, self.d), dtype=torch.cdouble, device=self.device)

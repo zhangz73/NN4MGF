@@ -173,8 +173,8 @@ mgf_trainer = MGFTrainer(d = d, mu = MU, sigma = SIGMA, R = R, hidden_dim = 128,
 if RETRAIN:
     anchor_set = None
     joint_rounds = [
-        dict(epochs=50000, lr=1e-3, T0=50000, eta_min=1e-4),
-        dict(epochs=50000, lr=1e-4, T0=50000, eta_min=1e-5),
+        dict(epochs=100000, lr=1e-3, T0=100000, eta_min=1e-4),
+        #dict(epochs=50000, lr=1e-4, T0=50000, eta_min=1e-5),
 #        dict(epochs=500, lr=1e-4, T0=5000, eta_min=1e-7),
 #        dict(epochs=500, lr=1e-5, T0=5000, eta_min=1e-8),
     ]

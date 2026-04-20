@@ -106,8 +106,8 @@ class LogGMFNet(nn.Module):
     def __init__(
         self,
         d: int,
-        ff_m: int = 32,
-        dim_embed_dim: int = 32,
+        ff_m: int = 64,
+        dim_embed_dim: int = 64,#32,#128,#64,
         hidden_dim: int = 128,
         scale_by_zero: bool = True,
         x_min: float = -5.0,
@@ -118,7 +118,7 @@ class LogGMFNet(nn.Module):
         fmax_x: float = 1.5,
         fmax_y: float = 2.0,
         use_boundary_embed: bool = False,
-        boundary_embed_dim: int = 32,
+        boundary_embed_dim: int = 64,#128,#64,
         dtype: torch.dtype = torch.float64,
     ):
         super().__init__()
@@ -128,6 +128,15 @@ class LogGMFNet(nn.Module):
         self.Y_MIN, self.Y_MAX = y_min, y_max
         self.use_boundary_embed = use_boundary_embed
         self.dtype = dtype
+
+        if False: #d <= 20:
+            fmin = fmin
+            fmax_x=1.5
+            fmax_y=2.5
+        else:
+            fmin = fmin
+            fmax_x=6.0
+            fmax_y=10.0
 
         # Shared 1D Fourier feature map
         self.ff = FourierFeatures(
@@ -262,7 +271,7 @@ class MGFNet(nn.Module):
 
         self.interior_network = LogGMFNet(
             self.d,
-            ff_m=32,
+            ff_m=64,#128,
             hidden_dim=hidden_dim,
             scale_by_zero=True,
             x_min=x_min,
@@ -273,7 +282,7 @@ class MGFNet(nn.Module):
 
         self.boundary_network = LogGMFNet(
             self.d - 1,
-            ff_m=32,
+            ff_m=64,#128,
             hidden_dim=hidden_dim,
             scale_by_zero=False,
             x_min=x_min,

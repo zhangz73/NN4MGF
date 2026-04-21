@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1  # Request 1 GPU (max 8)
-#SBATCH --time=04:00:00     # Time limit hrs:min:sec
+#SBATCH --time=02:00:00     # Time limit hrs:min:sec
 #SBATCH --output=job_%j.out
 
 # Run your command

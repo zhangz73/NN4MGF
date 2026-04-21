@@ -47,8 +47,8 @@ class FourierFeatures(nn.Module):
         self.use_pairwise = use_pairwise
 
         # frequencies are defined on normalized coords in [-1,1]
-        freqs_x = torch.logspace(math.log10(fmin), math.log10(fmax_x), self.half, dtype=dtype)
-        freqs_y = torch.logspace(math.log10(fmin), math.log10(fmax_y), self.half, dtype=dtype)
+        freqs_x = torch.logspace(fmin, fmax_x, self.half, dtype=dtype) #torch.logspace(math.log10(fmin), math.log10(fmax_x), self.half, dtype=dtype)
+        freqs_y = torch.logspace(fmin, fmax_y, self.half, dtype=dtype) #torch.logspace(math.log10(fmin), math.log10(fmax_y), self.half, dtype=dtype)
         self.register_buffer("freqs_x", freqs_x)  # (half,)
         self.register_buffer("freqs_y", freqs_y)  # (half,)
 
@@ -134,9 +134,9 @@ class LogGMFNet(nn.Module):
             fmax_x=1.5
             fmax_y=2.5
         else:
-            fmin = fmin
-            fmax_x=6.0
-            fmax_y=10.0
+            fmin = -4
+            fmax_x=0.5
+            fmax_y=1.0
 
         # Shared 1D Fourier feature map
         self.ff = FourierFeatures(

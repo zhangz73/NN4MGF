@@ -128,6 +128,7 @@ class LogGMFNet(nn.Module):
         self.Y_MIN, self.Y_MAX = y_min, y_max
         self.use_boundary_embed = use_boundary_embed
         self.dtype = dtype
+        self.first_hidden_dim = hidden_dim
 
         if False: #d <= 20:
             fmin = fmin
@@ -164,9 +165,9 @@ class LogGMFNet(nn.Module):
             shared_in_dim += boundary_embed_dim
 
         self.coord_net = nn.Sequential(
-            nn.Linear(shared_in_dim, hidden_dim, dtype=dtype),
+            nn.Linear(shared_in_dim, self.first_hidden_dim, dtype=dtype),
             nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim, dtype=dtype),
+            nn.Linear(self.first_hidden_dim, hidden_dim, dtype=dtype),
             nn.SiLU(),
             nn.Linear(hidden_dim, 2, dtype=dtype),   # per-coordinate contribution: (Re, Im)
         )
@@ -539,7 +540,7 @@ class MGFTrainer:
             # oversample to reduce rejection loops
             n_try = int(remaining) #int(remaining * 1.5) + 16
 
-            kappa = 1 #self.d ** 0.5
+            kappa = 1 #max(1, self.d / 10) #self.d ** 0.5
             real_lb_curr = ub - (ub - lb) * torch.rand(n_try, 1, device=self.device).double() ** (kappa)
             real_ub_curr = ub
             imag_bd = max(abs(imag_ub), abs(imag_lb)) * torch.rand(n_try, 1, device=self.device).double()

@@ -25,7 +25,7 @@ EVAL_LB = -5
 EVAL_UB = 0.5
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
-RETRAIN = True
+RETRAIN = False#True
 
 scheme = f"d={d}/skewed_symmetry"
 
@@ -45,7 +45,10 @@ def check_skew_symmetry(R, SIGMA, MU):
 
 def generate_instance(d = 2):
     c_vec = torch.ones(d + 1)
-    beta_vec = torch.arange(d + 1) + 1.
+    delta = 0.5
+    #beta_vec = torch.zeros(d+1)
+    #beta_vec[1:] = 1 + torch.log(1 + torch.arange(d))
+    beta_vec = torch.arange(d+1)
     R = torch.zeros((d, d))
     SIGMA = torch.zeros((d, d))
     MU = torch.zeros(d)
@@ -359,7 +362,7 @@ if RETRAIN:
         # Warm-up / coarse fit
         dict(epochs=100000, lr=1e-3, T0=100000, eta_min=1e-4),
         # Refine BAR fit
-        #dict(epochs=400000, lr=1e-4, T0=400000, eta_min=1e-5),
+        dict(epochs=100000, lr=1e-4, T0=100000, eta_min=1e-5),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -416,7 +419,7 @@ for i in range(d):
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
 
-
+"""
 moment_N = 3
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
@@ -429,7 +432,7 @@ with open(f"Plots/{scheme}/tables.txt", "w") as file:
         pred_moment_lst = predicted_moments[n]
         print_table(file, d_lst, true_moment_lst, pred_moment_lst)
         file.write("\n\n")
-
+"""
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 11)) #list(range(1, 6))
@@ -440,6 +443,7 @@ for t in tqdm(t_lst):
     ans = tail_prob(t)
     true_prob_lst.append(float(ans))
     predicted = tail_prob_predicted(mgf_trainer, t)
+    predicted = predicted.real
     predicted_prob_lst.append(predicted)
 
 with open(f"Plots/{scheme}/tables.txt", "a") as file:

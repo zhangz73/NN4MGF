@@ -25,7 +25,7 @@ EVAL_LB = -5
 EVAL_UB = 0.5
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
-RETRAIN = True
+RETRAIN = False #True
 
 scheme = f"d={d}/skewed_symmetry"
 
@@ -420,7 +420,7 @@ for i in range(d):
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
 
-
+"""
 moment_N = 3
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
@@ -433,7 +433,7 @@ with open(f"Plots/{scheme}/tables.txt", "w") as file:
         pred_moment_lst = predicted_moments[n]
         print_table(file, d_lst, true_moment_lst, pred_moment_lst)
         file.write("\n\n")
-
+"""
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 11)) #list(range(1, 6))

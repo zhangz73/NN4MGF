@@ -25,7 +25,7 @@ EVAL_LB = -5
 EVAL_UB = 0.5
 EVAL_IMAG_LB = -5
 EVAL_IMAG_UB = 5
-RETRAIN = False #True
+RETRAIN = True
 
 scheme = f"d={d}/skewed_symmetry"
 
@@ -362,8 +362,8 @@ if RETRAIN:
         # Warm-up / coarse fit
         dict(epochs=100000, lr=1e-3, T0=100000, eta_min=1e-4),
         # Refine BAR fit
-        dict(epochs=50000, lr=1e-4, T0=50000, eta_min=1e-5),
-        dict(epochs=50000, lr=1e-5, T0=50000, eta_min=3e-6),
+        #dict(epochs=100000, lr=1e-4, T0=100000, eta_min=1e-5),
+        #dict(epochs=100000, lr=1e-5, T0=100000, eta_min=1e-6),
 #        # Final polishing
         #dict(epochs=20000, lr=3e-5, T0=20000, eta_min=1e-5),
         #dict(epochs=20000, lr=1e-5, T0=20000, eta_min=3e-6),
@@ -380,7 +380,7 @@ if RETRAIN:
     batch_size = 16384 #4096 #8192#16384
     max_grad_sample = 1024#128#1024
     max_boundary_grad_sample = 128#16#128
-    train_freq = 1
+    train_freq = 2
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),
@@ -420,7 +420,7 @@ for i in range(d):
 #print("Mean queue lengths:", first_moment)
 #print("True mean queue lengths:", [1/x for x in alpha])
 
-"""
+
 moment_N = 3
 predicted_moments = mgf_trainer.moments_from_mgf(N = moment_N)
 true_moments = compute_true_moments(N=moment_N)
@@ -433,7 +433,7 @@ with open(f"Plots/{scheme}/tables.txt", "w") as file:
         pred_moment_lst = predicted_moments[n]
         print_table(file, d_lst, true_moment_lst, pred_moment_lst)
         file.write("\n\n")
-"""
+
 
 ## Comparing Tail probability of X1 + X2 against ground truth
 t_lst = list(range(1, 11)) #list(range(1, 6))

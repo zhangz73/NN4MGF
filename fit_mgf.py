@@ -1112,7 +1112,7 @@ class MGFTrainer:
 
         # --- STEP 2: recompute mu1 and mu2 to increase accuracy ---
         # Paper suggests setting a1 = a2 = 2*mu1/mu2 (Sec. 6.2 Step 2).
-        a12 = 2.0 * mu1 / mu2 if mu2 != 0 else 1.0
+        a12 = 2.0 * mu1 / mu2 if mu2 > 0 else 1.0
         mu1 = self._moment_from_mgf_one_n(1, dim, a12, l=l_step2, gamma=gamma, use_log=False)
         mu2 = self._moment_from_mgf_one_n(2, dim, a12, l=l_step2, gamma=gamma, use_log=False)
         mu[1], mu[2] = mu1, mu2
@@ -1124,9 +1124,11 @@ class MGFTrainer:
         for n in range(3, N + 1):
             if not use_log:
                 # a_n = (n-1)*mu_{n-2}/mu_{n-1} (Eq. (29))
-                if mu[n - 1] <= 0:
-                    raise FloatingPointError(f"mu_{n-1} <= 0; cannot form a_n.")
+#                if mu[n - 1] <= 0:
+#                    raise FloatingPointError(f"mu_{n-1} <= 0; cannot form a_n.")
                 a_n = (n - 1.0) * mu[n - 2] / mu[n - 1]
+                if a_n <= 0:
+                    a_n = 1.0
 
                 try:
                     mu_n = self._moment_from_mgf_one_n(n, dim, a_n, l=l_step3, gamma=gamma, use_log=False)

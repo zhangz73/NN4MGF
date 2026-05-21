@@ -377,10 +377,10 @@ if RETRAIN:
     lam_growth = 0
     lam_zero_anchor = 1e-1
     lam_boundary_consistent = 1e1
-    batch_size = 12500#16384 #4096 #8192#16384
+    batch_size = 8192#16384 #4096 #8192#16384
     max_grad_sample = 1024#128#1024
     max_boundary_grad_sample = 128#16#128
-    train_freq = 2
+    train_freq = 1
 #    joint_rounds = [
 #        dict(epochs=5000, lr=1e-3, T0=5000, eta_min=1e-5),
 ##        dict(epochs=5000, lr=1e-4, T0=5000, eta_min=1e-6),

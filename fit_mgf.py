@@ -136,8 +136,8 @@ class LogGMFNet(nn.Module):
             fmax_y=2.5
         else:
             fmin = -4
-            fmax_x=0.5
-            fmax_y=1.0
+            fmax_x=0.1 #0.5
+            fmax_y=0.5 #1.0
 
         # Shared 1D Fourier feature map
         self.ff = FourierFeatures(

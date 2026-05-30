@@ -445,6 +445,7 @@ for t in tqdm(t_lst):
     true_prob_lst.append(float(ans))
     predicted = tail_prob_predicted(mgf_trainer, t)
     predicted = predicted.real
+    predicted = max(min(predicted, 1.0), 0.0)
     predicted_prob_lst.append(predicted)
 
 with open(f"Plots/{scheme}/tables.txt", "a") as file:
